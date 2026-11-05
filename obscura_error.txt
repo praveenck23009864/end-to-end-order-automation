@@ -1,0 +1,20 @@
+Stage: waiting for Address 1 to unlock
+Error type: AssertionError
+
+Locator expected to be editable
+Actual value: None
+Error: TypeError: Cannot read properties of undefined (reading 'length')
+    at Object.TH (<eval-remote>:3396:33)
+    at getImplicitAriaRole (<eval-remote>:3435:106)
+    at computeAriaRole (<eval-remote>:3554:12)
+    at getAriaRole (<eval-remote>:3547:16)
+    at match (<eval-remote>:5471:9)
+    at query (<eval-remote>:5515:7)
+    at queryRole (<eval-remote>:5521:3)
+    at Object.queryAll (<eval-remote>:5534:16)
+    at InjectedScript._queryEngineAll (<eval-remote>:7241:49)
+    at InjectedScript.querySelectorAll (<eval-remote>:7228:30) 
+Call log:
+  - Expect "to_be_editable" get_by_role("textbox", name="Address 1", exact=True) with timeout 30000ms
+  - waiting for get_by_role("textbox", name="Address 1", exact=True)
+
