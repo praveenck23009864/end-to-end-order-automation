@@ -1,0 +1,22 @@
+# Local environments and generated artifacts
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+trace*.zip
+playwright-report/
+test-results/
+.orders.encrypted.*.tmp
+
+# Local credentials and customer data (already tracked files remain tracked)
+.env
+.env.*
+!.env.example
+*.db
+*.db-*
+*.sqlite*
+*.dpapi
+orders*.json
+# Logs and sensitive debugging output
+*.log
+debug.log
