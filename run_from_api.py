@@ -10,9 +10,11 @@ from playwright.sync_api import expect, sync_playwright
 import api_client
 import new as automation
 from sensitive_data import (
-    SensitiveDataError, assert_protected_order, get_api_token,
+    SensitiveDataError, assert_non_sensitive_order, get_api_token,
     require_private_browser_logging,
 )
+from jwe_crypto import encrypt_sensitive_payload, clear_sensitive_mapping
+from sensitive_input import collect_sensitive_payload
 from collections.abc import Callable, Iterable
 from typing import cast
 
@@ -52,6 +54,7 @@ def check_automation_functions():
         "customize_equipment",
         "qualify_account_holder",
         "complete_installation",
+        "verify_ez_enroll_payment",
         "complete_sample_payment",
     )
 
@@ -65,7 +68,7 @@ def check_automation_functions():
         )
 
 
-def build_steps(page, order) -> Iterable[Step]:
+def build_steps(page, order, sensitive=None, payment_required=None) -> Iterable[Step]:
     existing_builder = getattr(automation, "build_steps", None)
 
     if callable(existing_builder):
@@ -136,19 +139,26 @@ def build_steps(page, order) -> Iterable[Step]:
                 lambda: automation.complete_installation(
                     page,
                     order,
-                    advance=(
-                        not sample_payment_requested(order)
-                        or order.get("EZ Enroll") == "No"
-                    ),
+                    advance=str(order.get("EZ Enroll", "")).strip().lower() == "no",
+                    sensitive=sensitive,
                 ),
             ),
         ]
     )
 
-    if sample_payment_requested(order):
+    ez_enroll = str(order.get("EZ Enroll", "")).strip().lower()
+    if ez_enroll == "yes":
         steps.append((
-            "sample payment and Forward",
-            lambda: automation.complete_sample_payment(page, order),
+            "verifying EZ Enroll payment review",
+            lambda: automation.verify_ez_enroll_payment(page, order, sensitive),
+        ))
+
+    if payment_required is None:
+        payment_required = sample_payment_requested(order)
+    if payment_required and ez_enroll != "yes":
+        steps.append((
+            "verifying sample payment fields",
+            lambda: automation.complete_sample_payment(page, order, sensitive),
         ))
 
     return steps
@@ -222,224 +232,102 @@ def wait_for_session(page, run_id):
         raise RuntimeError("Browser page closed during session setup.")
 
 
-def main():
-    print("AUTOMATION FILE:", automation.__file__)
-
-    # Validate configuration before creating an API run.
-    try:
-        check_automation_functions()
-        if "--sample-payment" in sys.argv and "--inspect-payment-fields" in sys.argv:
-            raise ValueError("Choose sample payment or payment-field inspection for this run.")
-        require_private_browser_logging()
-        get_api_token()  # Verify local DPAPI setup before creating a run.
-
-        url = getattr(automation, "URL", "")
-        if not isinstance(url, str):
-            raise ValueError("URL in new.py must be a string.")
-
-        parsed = urlparse(url)
-        if parsed.scheme != "https" or not parsed.hostname:
-            raise ValueError("Set URL in new.py to your simulator HTTPS URL.")
-
-        customer_ids = [str(customer_id) for customer_id in api_client.list_order_ids()]
-
-        if not customer_ids:
-            raise ValueError("No customers found. Run import_orders.py first.")
-
-        choice = input(f"Choose test customer {', '.join(customer_ids)}: ").strip()
-
-        if choice not in customer_ids:
-            raise ValueError("Choose a customer ID from the list.")
-
-        selected_order = api_client.load_order(choice)
-        assert_protected_order(selected_order, choice)
-        automation.validate_order(selected_order)
-        if sample_payment_requested(selected_order) and "--inspect-payment-fields" in sys.argv:
-            raise ValueError("Choose sample payment or payment-field inspection for this run.")
-
-    except (
-        api_client.ApiError,
-        ValueError,
-        AttributeError,
-        KeyboardInterrupt,
-        EOFError,
-    ) as error:
-        raise SystemExit(str(error) or "Cancelled.") from None
-
-    run_id = str(uuid4())
-    print(f"Run ID: {run_id}")
-
-    try:
-        run = api_client.begin_run(choice, run_id)
-    except api_client.ApiError as error:
-        raise SystemExit(
-            f"{error}\n" f"Check /runs/{run_id} before retrying."
-        ) from None
-
-    if run["status"] != "running":
-        raise SystemExit(
-            "This run has already finished. " "Browser actions were not repeated."
-        )
+def run_backend_workflow(run_id, order, sensitive, payment_required):
+    """Run Playwright in the authenticated API process with decrypted RAM data."""
+    import database as db
 
     stage = "validating saved order"
     browser = None
-    page = None
-
     try:
-        # Use the order snapshot saved for this run.
-        order = run["order"]
-        assert_protected_order(order, choice)
+        assert_non_sensitive_order(order, order.get("Customer ID"))
         automation.validate_order(order)
-
         with sync_playwright() as playwright:
-            try:
-                stage = "opening simulator"
-                api_client.progress(run_id, "running", stage)
+            stage = "opening simulator"
+            db.update_run(run_id, "running", stage)
+            browser = playwright.chromium.launch(
+                headless=False,
+                slow_mo=0 if "--fast" in sys.argv else SLOW_MO_MS,
+            )
+            page = browser.new_page(viewport={"width": 1600, "height": 1000})
+            page.set_default_timeout(TIMEOUT_MS)
+            expect.set_options(timeout=TIMEOUT_MS)
+            page.goto(automation.URL, wait_until="domcontentloaded", timeout=60_000)
 
-                browser = playwright.chromium.launch(
-                    headless=False,
-                    slow_mo=0 if "--fast" in sys.argv else SLOW_MO_MS,
-                )
-
-                page = browser.new_page(
-                    viewport={
-                        "width": 1600,
-                        "height": 1000,
-                    }
-                )
-
-                page.set_default_timeout(TIMEOUT_MS)
-                expect.set_options(timeout=TIMEOUT_MS)
-
-                page.goto(
-                    url,
-                    wait_until="domcontentloaded",
-                    timeout=60_000,
-                )
-
-                stage = "waiting for login / session screen"
-                wait_for_session(page, run_id)
-
-                stage = "preparing automation steps"
-                steps = list(build_steps(page, order))
-
-                if not steps:
-                    raise ValueError("No automation steps were configured.")
-
-                # Login and final manual review are excluded.
-                target_seconds =  0.0
-
-                # Allocate a different time share to each step.
-                weights = [random.uniform(0.8, 1.2) for _ in steps]
-
-                total_weight = sum(weights)
-                completed_weight = 0.0
-                started_at = time.monotonic()
-
-                print(
-                    "\nTarget automation duration: "
-                    f"{target_seconds / 60:.1f} minutes"
-                )
-                print(
-                    "This includes typing, page loading, " "and pauses between steps.\n"
-                )
-
-                for index, (stage, action) in enumerate(steps):
-                    api_client.progress(
-                        run_id,
-                        "running",
-                        stage,
-                    )
-
-                    print(
-                        f"STEP {index + 1}/{len(steps)}: {stage}",
-                        flush=True,
-                    )
-
-                    step_started_at = time.monotonic()
-
-                    # Execute each action exactly once.
-                    action()
-
-                    step_elapsed = time.monotonic() - step_started_at
-                    print(
-                        f"Step completed in {step_elapsed:.1f}s",
-                        flush=True,
-                    )
-
-                    completed_weight += weights[index]
-
-                    scheduled_finish = (
-                        started_at + target_seconds * completed_weight / total_weight
-                    )
-
-                    # Page loading and human_fill() typing time
-                    # reduce the amount of additional waiting.
-                    remaining = scheduled_finish - time.monotonic()
-
-                    if remaining > 0:
-                        print(
-                            f"Pacing pause: {remaining:.0f}s",
-                            flush=True,
-                        )
-
-                        # Short chunks keep browser events processing.
-                        while remaining > 0:
-                            if page.is_closed():
-                                raise RuntimeError("Browser page closed during pacing.")
-
-                            page.wait_for_timeout(min(remaining, 15.0) * 1000)
-
-                            remaining = scheduled_finish - time.monotonic()
-
-                elapsed_seconds = time.monotonic() - started_at
-
-                stage = (
-                    "payment Forward clicked"
-                    if sample_payment_requested(order)
-                    else "installation Forward clicked"
-                )
-                api_client.progress(
-                    run_id,
-                    "installation_completed",
-                    stage,
-                )
-
-                print("\nPASS: Installation flow completed " "and saved.")
-                print(f"Automation duration: " f"{elapsed_seconds / 60:.1f} minutes")
-                print("Final order has NOT been submitted.")
-
-                if "--inspect-payment-fields" in sys.argv:
-                    from tools.inspect_payment_fields import inspect_payment_fields
-                    pause_for_review(
-                        "Open Add a new credit card and Edit Secure Fields manually. "
-                        "Leave payment fields empty. Press Enter to collect field selectors: "
-                    )
-                    inspect_payment_fields(page)
-
-                pause_for_review(
-                    "Review the next screen. " "Press Enter to close Chromium: "
-                )
-
-            except (Exception, KeyboardInterrupt) as error:
-                record_failure(
-                    run_id,
-                    stage,
-                    error,
-                    page,
-                )
-
-            finally:
-                if browser is not None:
-                    with suppress(Exception):
-                        browser.close()
-
+            stage = "waiting for login / session screen"
+            wait_for_session(page, run_id)
+            stage = "preparing automation steps"
+            steps = list(build_steps(page, order, sensitive, payment_required))
+            if not steps:
+                raise ValueError("No automation steps were configured.")
+            for index, (stage, action) in enumerate(steps, start=1):
+                db.update_run(run_id, "running", stage)
+                print(f"STEP {index}/{len(steps)}: {stage}", flush=True)
+                action()
+            final_stage = "payment Forward clicked" if payment_required else "installation Forward clicked"
+            db.update_run(run_id, "installation_completed", final_stage)
+            browser.close()
+            browser = None
     except (Exception, KeyboardInterrupt) as error:
-        record_failure(
-            run_id,
-            stage,
-            error,
+        status = "cancelled" if isinstance(error, KeyboardInterrupt) else "failed"
+        error_code = "interrupted" if status == "cancelled" else "automation_error"
+        try:
+            db.update_run(run_id, status, stage, error_code)
+        except Exception:
+            print("Could not persist the workflow failure status.", flush=True)
+        print(
+            f"{status.upper()} function=run_backend_workflow stage={stage} "
+            f"exception={type(error).__name__}.",
+            flush=True,
         )
+        if isinstance(error, (SensitiveDataError, automation.BrowserWorkflowError)):
+            # Controlled automation diagnostics contain field names and state,
+            # never customer values, page text, or raw Playwright exceptions.
+            print(f"SAFE DETAIL: {error}", flush=True)
+    finally:
+        if browser is not None:
+            with suppress(Exception):
+                browser.close()
+        clear_sensitive_mapping(sensitive)
+
+
+def main():
+    """Collect and encrypt sensitive values, then submit JWE to the API worker."""
+    print("AUTOMATION FILE:", automation.__file__)
+    try:
+        check_automation_functions()
+        require_private_browser_logging()
+        get_api_token()
+        customer_ids = [str(customer_id) for customer_id in api_client.list_order_ids()]
+        if not customer_ids:
+            raise ValueError("No customers found. Import non-sensitive order data first.")
+        choice = input(f"Choose test customer {', '.join(customer_ids)}: ").strip()
+        if choice not in customer_ids:
+            raise ValueError("Choose a customer ID from the list.")
+        order = api_client.load_order(choice)
+        assert_non_sensitive_order(order, choice)
+        automation.validate_order(order)
+        payment_required = (
+            str(order.get("EZ Enroll", "")).strip().lower() == "yes"
+            or sample_payment_requested(order)
+        )
+        payload = collect_sensitive_payload(payment_required=payment_required)
+        run_id = str(uuid4())
+        key_document = api_client.get_sensitive_public_key()
+        compact_jwe = encrypt_sensitive_payload(
+            payload, order_id=choice, run_id=run_id,
+            payment_required=payment_required, public_document=key_document,
+        )
+        api_client.begin_run(choice, run_id)
+        api_client.submit_sensitive_payload(run_id, compact_jwe)
+        print(f"Run {run_id} accepted by the API worker. Sensitive values were not logged.")
+        print("The browser is controlled by the API process; complete login there for manual review.")
+    except (api_client.ApiError, ValueError, AttributeError, KeyboardInterrupt, EOFError) as error:
+        raise SystemExit(str(error) or "Cancelled.") from None
+    finally:
+        if "payload" in locals():
+            clear_sensitive_mapping(payload)
+        if "compact_jwe" in locals():
+            compact_jwe = None
 
 
 if __name__ == "__main__":

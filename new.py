@@ -18,13 +18,17 @@ import json
 from playwright.sync_api import Error, expect, sync_playwright
 from sensitive_data import (
     SensitiveDataError,
-    assert_protected_order,
-    decrypt_sensitive,
+    assert_non_sensitive_order,
     reject_card_fields,
     require_private_browser_logging,
     validate_sensitive_values,
 )
 from urllib.parse import urlparse
+
+
+class BrowserWorkflowError(RuntimeError):
+    """Safe browser interaction or workflow validation failure."""
+
 
 URL = "https://lemon-forest-0915c3c1e.6.azurestaticapps.net/allconnect/"
 BASE_DIR = Path(__file__).resolve().parent
@@ -94,10 +98,11 @@ def validate_order(order, *, allow_plaintext=False):
     if not isinstance(order, dict):
         raise ValueError("Customer data must be an object.")
     reject_card_fields(order)
-    protected = "Sensitive Data" in order
-    if protected:
-        assert_protected_order(order)
-    elif allow_plaintext:
+    if not allow_plaintext:
+        assert_non_sensitive_order(order)
+        if "SSN" in order or "DOB" in order or "Sensitive Data" in order:
+            raise SensitiveDataError("Sensitive identity values are runtime-only.")
+    elif "SSN" in order or "DOB" in order:
         validate_sensitive_values({"SSN": order.get("SSN"), "DOB": order.get("DOB")})
     else:
         raise SensitiveDataError("Encrypt the customer data before running automation.")
@@ -120,12 +125,8 @@ def validate_order(order, *, allow_plaintext=False):
         "Shipping Same As Service",
         "Phone Number",
         "Email Address",
-        "SSN",
-        "DOB",
         "Installation Type",
     }
-    if protected:
-        required -= {"SSN", "DOB"}
     optional_blank = {"Prefix", "MI", "Suffix", "Unit Type", "Unit Number"}
     for key in sorted(required):
         value = order.get(key)
@@ -158,7 +159,10 @@ def validate_order(order, *, allow_plaintext=False):
             errors.append(f"{key}: use JSON true or false.")
     if order.get("Account Holder Verified") is not True:
         errors.append("Account Holder Verified: confirmation is required.")
-    if order.get("EZ Enroll") == "Yes" and order.get("EZ Enroll Disclosure Read") is not True:
+    if (
+        order.get("EZ Enroll") == "Yes"
+        and order.get("EZ Enroll Disclosure Read") is not True
+    ):
         errors.append("EZ Enroll Disclosure Read: acknowledgement must be JSON true.")
     if (
         order.get("Automatic Payments") == "Yes"
@@ -190,7 +194,7 @@ def validate_order(order, *, allow_plaintext=False):
         except (KeyError, TypeError, ValueError, InvalidOperation):
             errors.append(f"{key}: provide a finite nonnegative amount.")
 
-    date_keys = [] if protected else ["DOB"]
+    date_keys = ["DOB"] if allow_plaintext else []
     if order.get("Moving?") == "Yes":
         date_keys.append("Move Date")
     if order.get("Installation Type") == "PRO_INSTALL":
@@ -221,7 +225,7 @@ def validate_order(order, *, allow_plaintext=False):
     ):
         errors.append("Email Address: provide a valid email format.")
     # Format only: test fixtures are not validated as real SSNs.
-    if not protected and not re.fullmatch(
+    if allow_plaintext and not re.fullmatch(
         r"(?:\d{9}|\d{3}-\d{2}-\d{4})", str(order.get("SSN", ""))
     ):
         errors.append(
@@ -550,22 +554,74 @@ def customize_products(page, order):
 
 
 def set_broadband_labels(page, requested=False):
+    """
+    Select the mandatory Broadband Fact Labels response
+    and acknowledge the Read checkbox.
+
+    Radio order on the simulator:
+      0 = Customer requested Broadband Fact Labels
+      1 = Customer did not request Broadband Fact Labels
+    """
     checkout = page.frame_locator("#checkoutContent")
 
-    response = (
-        "Customer requested the Broadband Fact Labels: providerxx.com/labels"
+    # Locate the displayed choice using its visible text.
+    label_pattern = (
+        re.compile(
+            r"Customer requested the Broadband Fact Labels",
+            re.IGNORECASE,
+        )
         if requested
-        else "Customer did not request Broadband Fact labels"
+        else re.compile(
+            r"Customer did not request Broadband Fact labels",
+            re.IGNORECASE,
+        )
     )
 
-    radio = named_choice(checkout, "radio", response)
-    radio.check()
-    expect(radio).to_be_checked()
+    choice_text = checkout.get_by_text(label_pattern).filter(visible=True)
+    expect(choice_text).to_have_count(1, timeout=TIMEOUT_MS)
 
-    section = radio.locator('xpath=ancestor-or-self::*[.//input[@type="checkbox"]][1]')
-    read_box = named_choice(section, "checkbox", "Read")
+    # Find the radio group containing both mandatory options.
+    section = choice_text.locator(
+        'xpath=ancestor::*[count(.//input[@type="radio"])=2][1]'
+    )
+
+    radios = section.locator('input[type="radio"]:visible')
+    expect(radios).to_have_count(2, timeout=TIMEOUT_MS)
+
+    # Select according to the customer JSON boolean.
+    selected_index = 0 if requested else 1
+    selected_radio = radios.nth(selected_index)
+
+    selected_radio.scroll_into_view_if_needed()
+    selected_radio.check()
+    expect(selected_radio).to_be_checked()
+
+    print(
+        "PASS: Broadband Fact Labels response selected: "
+        + ("Requested" if requested else "Not Requested")
+    )
+
+    # Locate the mandatory Read checkbox independently
+    # of the radio input's HTML label structure.
+    read_text = checkout.get_by_text(exact_text("Read")).filter(visible=True)
+
+    expect(read_text).to_have_count(1, timeout=TIMEOUT_MS)
+
+    read_section = read_text.locator(
+        'xpath=ancestor-or-self::*[.//input[@type="checkbox"]][1]'
+    )
+
+    read_boxes = read_section.locator('input[type="checkbox"]:visible')
+
+    expect(read_boxes).to_have_count(1, timeout=TIMEOUT_MS)
+
+    read_box = read_boxes.first
+    read_box.scroll_into_view_if_needed()
+
     read_box.check()
     expect(read_box).to_be_checked()
+
+    print("PASS: Broadband Fact Labels Read checkbox checked.")
 
 
 def customize_equipment(page, order):
@@ -616,15 +672,11 @@ def qualify_account_holder(page, order):
     required_controls = []
 
     if order.get("Account Holder Verified") is not True:
-        raise ValueError(
-            "Speak to the Account Holder before continuing."
-        )
+        raise ValueError("Speak to the Account Holder before continuing.")
 
     for key in ("Mailing Same As Service", "Shipping Same As Service"):
         if order.get(key) != "Yes":
-            raise ValueError(
-                f"{key}: separate address entry is required."
-            )
+            raise ValueError(f"{key}: separate address entry is required.")
 
     def answer_yes_no(question, answer, label):
         if answer not in ("Yes", "No"):
@@ -634,8 +686,7 @@ def qualify_account_holder(page, order):
         expect(text).to_have_count(1, timeout=30_000)
 
         section = text.locator(
-            'xpath=ancestor::*'
-            '[count(.//input[@type="radio"])=2][1]'
+            "xpath=ancestor::*" '[count(.//input[@type="radio"])=2][1]'
         )
         radios = section.locator('input[type="radio"]')
         expect(radios).to_have_count(2)
@@ -657,20 +708,16 @@ def qualify_account_holder(page, order):
     def acknowledge_disclosure(pattern, flag):
         if order.get(flag) is not True:
             raise SensitiveDataError(
-                f"{flag}: read the disclosure and "
-                "set this flag to JSON true."
+                f"{flag}: read the disclosure and " "set this flag to JSON true."
             )
 
         text = checkout.get_by_text(pattern).filter(visible=True)
         expect(text).to_have_count(1, timeout=30_000)
 
         section = text.locator(
-            'xpath=ancestor-or-self::*'
-            '[.//input[@type="checkbox"]][1]'
+            "xpath=ancestor-or-self::*" '[.//input[@type="checkbox"]][1]'
         )
-        box = section.locator(
-            'input[type="checkbox"]:visible'
-        )
+        box = section.locator('input[type="checkbox"]:visible')
         expect(box).to_have_count(1)
 
         if not box.is_checked():
@@ -681,19 +728,13 @@ def qualify_account_holder(page, order):
         required_controls.append((flag, box))
 
     answer_yes_no(
-        re.compile(
-            r"Agent\s*[–—-]?\s*Verify that you are speaking"
-        ),
+        re.compile(r"Agent\s*[–—-]?\s*Verify that you are speaking"),
         "Yes",
         "Account Holder Verified",
     )
 
-    phone = checkout.get_by_placeholder(
-        "Phone Number", exact=True
-    )
-    email = checkout.get_by_placeholder(
-        "Email Address", exact=True
-    )
+    phone = checkout.get_by_placeholder("Phone Number", exact=True)
+    email = checkout.get_by_placeholder("Email Address", exact=True)
 
     expect(phone).to_be_visible(timeout=15_000)
     expect(phone).to_be_editable()
@@ -751,23 +792,17 @@ def qualify_account_holder(page, order):
 
     mailing_question = checkout.get_by_text(
         re.compile(
-            r"Is your mailing address the same as "
-            r"service address\s*\?",
+            r"Is your mailing address the same as " r"service address\s*\?",
             re.I,
         )
     ).filter(visible=True)
 
-    expect(mailing_question).to_have_count(
-        1, timeout=30_000
-    )
+    expect(mailing_question).to_have_count(1, timeout=30_000)
 
     address_section = mailing_question.locator(
-        'xpath=ancestor::*'
-        '[count(.//input[@type="radio"])=4][1]'
+        "xpath=ancestor::*" '[count(.//input[@type="radio"])=4][1]'
     )
-    radios = address_section.locator(
-        'input[type="radio"]'
-    )
+    radios = address_section.locator('input[type="radio"]')
     expect(radios).to_have_count(4)
 
     # Mailing Yes/No, followed by Shipping Yes/No.
@@ -784,26 +819,36 @@ def qualify_account_holder(page, order):
 
     for label, option in required_controls:
         if not option.is_checked():
-            raise SensitiveDataError(f"Account Holder Qualification: {label} is no longer selected.")
+            raise SensitiveDataError(
+                f"Account Holder Qualification: {label} is no longer selected."
+            )
     click_forward(checkout)
 
     try:
-        expect(checkout.get_by_text(
-            "Installation and Payment:", exact=True,
-        )).to_be_visible(timeout=TIMEOUT_MS)
+        expect(
+            checkout.get_by_text(
+                "Installation and Payment:",
+                exact=True,
+            )
+        ).to_be_visible(timeout=TIMEOUT_MS)
     except (Error, AssertionError):
         # Never include page text, field values or raw Playwright diagnostics.
         diagnostics = "validation state unavailable"
         try:
-            invalid = checkout.locator('input:invalid:visible, select:invalid:visible, [aria-invalid="true"]:visible').count()
+            invalid = checkout.locator(
+                'input:invalid:visible, select:invalid:visible, [aria-invalid="true"]:visible'
+            ).count()
             alerts = checkout.locator('[role="alert"]:visible').count()
-            unchecked = sum(not control.is_checked() for _, control in required_controls)
+            unchecked = sum(
+                not control.is_checked() for _, control in required_controls
+            )
             diagnostics = f"invalid controls={invalid}; visible alerts={alerts}; unchecked required controls={unchecked}"
         except Error:
             pass
         raise SensitiveDataError(
             "Account Holder Qualification navigation blocked after one Forward click; "
-            + diagnostics + ". Review the simulator validation messages."
+            + diagnostics
+            + ". Review the simulator validation messages."
         ) from None
 
     print(
@@ -811,8 +856,10 @@ def qualify_account_holder(page, order):
         "Installation and Payment opened."
     )
 
+
 def fill_sensitive_field(field, value, label):
-    """Blur before filling, then report a fixed error message on any failure."""
+    """Fill transient values with value-free browser diagnostics."""
+    stage = "credit check" if label in {"SSN", "DOB"} else "payment review"
     try:
         require_private_browser_logging()
         expect(field).to_have_count(1)
@@ -830,10 +877,24 @@ def fill_sensitive_field(field, value, label):
         else:
             matches = actual == value
         if not matches:
-            raise SensitiveDataError("Sensitive field value did not match after entry.")
-    except (Error, AssertionError, ValueError):
-        raise SensitiveDataError(
-            "Sensitive field entry failed. Check the input format and selector."
+            raise BrowserWorkflowError(
+                f"Function fill_sensitive_field; stage={stage}; field={label}; "
+                "locator_found=true; visible=true; enabled=true; validation=failed; "
+                "exception=ValueMismatch."
+            )
+    except BrowserWorkflowError:
+        raise
+    except (Error, AssertionError, ValueError) as exc:
+        try:
+            found = field.count()
+            visible = field.is_visible() if found == 1 else False
+            enabled = field.is_enabled() if found == 1 else False
+        except Exception:
+            found, visible, enabled = "unknown", "unknown", "unknown"
+        raise BrowserWorkflowError(
+            f"Function fill_sensitive_field; stage={stage}; field={label}; "
+            f"locator_found={found}; visible={visible}; enabled={enabled}; "
+            f"validation=failed; exception={type(exc).__name__}."
         ) from None
 
 
@@ -848,7 +909,9 @@ def _log_payment_state(page, stage):
         re.I,
     )
     known_text = {
-        "hold_disclosure": re.compile(r"To confirm the card has sufficient funds", re.I),
+        "hold_disclosure": re.compile(
+            r"To confirm the card has sufficient funds", re.I
+        ),
         "payment_heading": re.compile(r"^PAYMENT INFORMATION$", re.I),
         "add_card": re.compile(r"^Add a new credit card$", re.I),
         "card_number_label": re.compile(r"^Card Number\s*:$", re.I),
@@ -898,7 +961,7 @@ def _log_payment_state(page, stage):
             )
 
 
-def complete_installation(page, order, *, advance=True):
+def complete_installation(page, order, *, advance=True, sensitive=None):
     print("INSTALLATION FLOW: confirm installation")
 
     installation_page_url = page.url
@@ -931,7 +994,12 @@ def complete_installation(page, order, *, advance=True):
         raise SensitiveDataError("EZ Enroll: supported choices are Yes, No.")
     if order["EZ Enroll"] == "Yes":
         if order.get("EZ Enroll Disclosure Read") is not True:
-            raise SensitiveDataError("EZ Enroll Disclosure Read: acknowledgement must be JSON true.")
+            raise SensitiveDataError(
+                "EZ Enroll Disclosure Read: acknowledgement must be JSON true."
+            )
+        if isinstance(sensitive, dict):
+            sensitive["ssn"] = ""
+            sensitive["dob"] = ""
         print("PASS: EZ Enroll selected; credit check skipped.")
     else:
         # Credit check.
@@ -954,16 +1022,19 @@ def complete_installation(page, order, *, advance=True):
         )
         expect(fields).to_have_count(2)
 
-        private = decrypt_sensitive(order)
+        if not isinstance(sensitive, dict):
+            raise SensitiveDataError(
+                "Runtime sensitive values are unavailable; credit check stopped."
+            )
 
         try:
             fill_sensitive_field(
                 fields.nth(0),
-                private["SSN"],
+                sensitive["ssn"],
                 "SSN",
             )
 
-            dob = date.fromisoformat(private["DOB"])
+            dob = date.fromisoformat(sensitive["dob"])
             dob_field = fields.nth(1)
 
             dob_value = (
@@ -993,8 +1064,10 @@ def complete_installation(page, order, *, advance=True):
             ) from None
 
         finally:
-            private.clear()
+            sensitive["ssn"] = ""
+            sensitive["dob"] = ""
             dob = None
+            dob_value = None
             dob_value = None
 
         status_heading = checkout.get_by_text(
@@ -1072,14 +1145,10 @@ def complete_installation(page, order, *, advance=True):
 
     # Do not ask the simulator to confirm until the requested installation
     # option and every required acknowledgment are in the accepted UI state.
-    confirm = checkout.get_by_role(
-        "button", name="Confirm Installation >", exact=True
-    )
+    confirm = checkout.get_by_role("button", name="Confirm Installation >", exact=True)
     expect(confirm).to_be_enabled()
 
-    forward = checkout.get_by_role(
-        "button", name="Forward >", exact=True
-    )
+    forward = checkout.get_by_role("button", name="Forward >", exact=True)
     # Some simulator states do not create Forward until Confirm Installation
     # succeeds. Observe it if present, but do not require it before confirming.
     forward_count_before = forward.count()
@@ -1108,18 +1177,25 @@ def complete_installation(page, order, *, advance=True):
     parent_warning = page.get_by_text(warning_text).filter(visible=True)
     dialog_seen = []
 
-    def stop_on_dialog(dialog):
-        # Dismiss only to release the browser automation; any dialog blocks the
-        # workflow, so no Forward action follows it.
-        dialog_seen.append(dialog.type)
-        dialog.dismiss()
+    expected_install_alert = (
+        "Read the MANDATORY statement to the customer and tick Read."
+    )
 
-    page.once("dialog", stop_on_dialog)
-    confirm.click()
-    if dialog_seen:
+    def handle_installation_dialog(dialog):
+        dialog_seen.append(dialog.message)
+        if dialog.message.strip() == expected_install_alert:
+            dialog.accept()
+        else:
+            dialog.dismiss()
+
+    page.on("dialog", handle_installation_dialog)
+    try:
+        confirm.click()
+    finally:
+        page.remove_listener("dialog", handle_installation_dialog)
+    if any(message.strip() != expected_install_alert for message in dialog_seen):
         raise SensitiveDataError(
-            "Installation confirmation was blocked by a simulator dialog; "
-            "Forward was not clicked."
+            "Unexpected installation simulator dialog; " "Forward was not clicked."
         )
 
     # Wait for either a simulator validation response or an observable accepted
@@ -1151,8 +1227,10 @@ def complete_installation(page, order, *, advance=True):
                     && (!forwardWasVisible || !forwardWasEnabled);
                 return validation || success || !confirm || confirm.disabled || forwardChanged;
             }""",
-            arg={"forwardWasVisible": forward_was_visible,
-                 "forwardWasEnabled": forward_was_enabled},
+            arg={
+                "forwardWasVisible": forward_was_visible,
+                "forwardWasEnabled": forward_was_enabled,
+            },
             timeout=TIMEOUT_MS,
         )
     except Error:
@@ -1188,8 +1266,11 @@ def complete_installation(page, order, *, advance=True):
         or confirm.count() == 0
         or not confirm.is_visible()
         or not confirm.is_enabled()
-        or (forward.is_visible() and forward.is_enabled()
-            and (not forward_was_visible or not forward_was_enabled))
+        or (
+            forward.is_visible()
+            and forward.is_enabled()
+            and (not forward_was_visible or not forward_was_enabled)
+        )
     )
     if not accepted:
         raise SensitiveDataError(
@@ -1201,7 +1282,9 @@ def complete_installation(page, order, *, advance=True):
     # Forward transition. Sample-payment runs must take that transition before
     # looking for the hold disclosure. EZ Enroll = Yes already renders payment
     # after confirmation, so its final payment Forward stays owned below.
-    sample_payment = "--sample-payment" in sys.argv or order.get("Sample Payment") is True
+    sample_payment = (
+        "--sample-payment" in sys.argv or order.get("Sample Payment") is True
+    )
     if sample_payment:
         _log_payment_state(page, "after installation confirmation")
     if advance:
@@ -1226,242 +1309,409 @@ def complete_installation(page, order, *, advance=True):
     print("PASS: Installation confirmation completed; payment stage is ready.")
 
 
-def complete_sample_payment(page, order):
-    """Enter fixed simulator fixtures, then click payment Forward once."""
-    # Card values never come from an order snapshot.
-    simulator_host = "lemon-forest-0915c3c1e.6.azurestaticapps.net"
-    parsed = urlparse(page.url)
-    if parsed.scheme != "https" or parsed.hostname != simulator_host:
-        raise SensitiveDataError(
-            "Sample payment is restricted to the configured simulator host."
-        )
-    require_private_browser_logging()
-    _log_payment_state(page, "before payment step")
+def _clear_payment_values(sensitive):
+    if not isinstance(sensitive, dict):
+        return
+    for key in (
+        "card_type",
+        "card_number",
+        "cardholder_name",
+        "cvv",
+        "expiration_month",
+        "expiration_year",
+    ):
+        if key in sensitive:
+            sensitive[key] = ""
+
+
+def _complete_payment_disclosure(page):
+    """Acknowledge and validate the mandatory payment disclosure."""
     checkout = page.frame_locator("#checkoutContent")
-    # The payment form is lower in the same scrollable checkout frame. Scroll
-    # the disclosure into view through its own locator, keeping this page open.
-    disclosure_pattern = re.compile(
-        r"To confirm the card has sufficient funds", re.I
-    )
     frame_disclosure = checkout.get_by_text(
-        disclosure_pattern
+        re.compile(
+            r"To confirm the card has sufficient funds.*before your order is placed",
+            re.I | re.S,
+        )
     ).filter(visible=True)
     page_disclosure = page.get_by_text(
-        disclosure_pattern
-    ).filter(visible=True)
-    # Installation confirmation can trigger the payment section to render
-    # asynchronously. In --fast runs the next step can otherwise inspect the
-    # frame before that disclosure has been added to the DOM.
-    disclosure_deadline = time.monotonic() + (TIMEOUT_MS / 1000)
-    frame_disclosure_count = 0
-    page_disclosure_count = 0
-    while True:
-        frame_disclosure_count = frame_disclosure.count()
-        page_disclosure_count = page_disclosure.count()
-        if frame_disclosure_count + page_disclosure_count == 1:
-            break
-        if frame_disclosure_count + page_disclosure_count > 1:
-            break
-        remaining = disclosure_deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        time.sleep(min(0.25, remaining))
-    if frame_disclosure_count + page_disclosure_count != 1:
-        _log_payment_state(page, "payment disclosure not found")
-        raise SensitiveDataError(
-            "Expected one visible payment hold disclosure; "
-            f"checkout matches={frame_disclosure_count}, "
-            f"page matches={page_disclosure_count}. "
-            "Card entry and Forward were not attempted."
+        re.compile(
+            r"To confirm the card has sufficient funds.*before your order is placed",
+            re.I | re.S,
         )
-    disclosure = frame_disclosure if frame_disclosure_count == 1 else page_disclosure
-    original_url = page.url
-    disclosure.scroll_into_view_if_needed(timeout=TIMEOUT_MS)
-    expect(disclosure).to_be_visible(timeout=TIMEOUT_MS)
-    if page.url != original_url:
-        raise SensitiveDataError(
-            "Payment disclosure scrolling navigated away from Installation and Payment."
+    ).filter(visible=True)
+    disclosure_deadline = time.monotonic() + TIMEOUT_MS / 1000
+    while (
+        frame_disclosure.count() + page_disclosure.count() == 0
+        and time.monotonic() < disclosure_deadline
+    ):
+        page.wait_for_timeout(100)
+    if frame_disclosure.count() + page_disclosure.count() != 1:
+        raise BrowserWorkflowError(
+            "Payment disclosure locator: expected exactly one complete disclosure; validation=failed."
+        )
+    disclosure_text = frame_disclosure if frame_disclosure.count() == 1 else page_disclosure
+    disclosure_text.scroll_into_view_if_needed(timeout=TIMEOUT_MS)
+    expect(disclosure_text).to_be_visible(timeout=TIMEOUT_MS)
+    whole_disclosure = " ".join(disclosure_text.inner_text().split())
+    if not re.search(
+        r"To confirm the card has sufficient funds.*before your order is placed",
+        whole_disclosure,
+        re.I,
+    ):
+        raise BrowserWorkflowError(
+            "Payment disclosure locator: found=1; visible=true; validation=failed."
         )
 
-    # Accept only the simulator's expected mandatory-disclosure alert. A
-    # different alert is dismissed and causes a safe stop below.
     expected_alert = "Read the MANDATORY statement to the customer and tick Read."
     dialog_messages = []
 
-    def handle_payment_dialog(dialog):
+    def handle_dialog(dialog):
         dialog_messages.append(dialog.message)
         if dialog.message.strip() == expected_alert:
             dialog.accept()
         else:
             dialog.dismiss()
 
-    page.on("dialog", handle_payment_dialog)
-    read_box = disclosure.locator(
+    page.on("dialog", handle_dialog)
+    read_box = disclosure_text.locator(
         'xpath=ancestor-or-self::*[.//input[@type="checkbox"]][1]'
     ).locator('input[type="checkbox"]:visible')
-    expect(read_box).to_have_count(1)
     try:
+        expect(read_box).to_have_count(1, timeout=TIMEOUT_MS)
         if not read_box.is_checked():
             expect(read_box).to_be_enabled(timeout=TIMEOUT_MS)
             read_box.check(timeout=TIMEOUT_MS)
         expect(read_box).to_be_checked(timeout=TIMEOUT_MS)
-    except (Error, AssertionError):
-        try:
-            checkbox_state = (
-                f"visible={read_box.is_visible()}, enabled={read_box.is_enabled()}, "
-                f"checked={read_box.is_checked()}"
-            )
-        except Error:
-            checkbox_state = "state=unavailable"
-        raise SensitiveDataError(
-            "Payment hold Read checkbox interaction failed ("
-            f"{checkbox_state}); card entry and Forward were not attempted."
-        ) from None
     finally:
-        page.remove_listener("dialog", handle_payment_dialog)
+        page.remove_listener("dialog", handle_dialog)
     if any(message.strip() != expected_alert for message in dialog_messages):
-        raise SensitiveDataError(
-            "Unexpected simulator alert blocked payment; card entry and Forward were not attempted."
+        raise BrowserWorkflowError(
+            "Payment disclosure stage: unexpected simulator alert; validation=failed."
         )
-    if dialog_messages and not read_box.is_checked():
-        raise SensitiveDataError(
-            "Payment hold Read acknowledgement was not accepted; Forward was not attempted."
+    expect(read_box).to_be_checked(timeout=TIMEOUT_MS)
+
+
+def _complete_payment_fields(page, order, sensitive):
+    if not isinstance(sensitive, dict):
+        raise SensitiveDataError("Runtime payment values are unavailable.")
+    parsed = urlparse(page.url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname != "lemon-forest-0915c3c1e.6.azurestaticapps.net"
+    ):
+        raise BrowserWorkflowError(
+            "Payment review stage: sensitive entry is restricted to the configured simulator."
         )
+    require_private_browser_logging()
+    checkout = page.frame_locator("#checkoutContent")
+    _complete_payment_disclosure(page)
 
     add = checkout.get_by_role(
         "radio", name="Add a new credit card", exact=True
     ).filter(visible=True)
-    expect(add).to_have_count(1)
+    expect(add).to_have_count(1, timeout=TIMEOUT_MS)
     if not add.is_checked():
-        expect(add).to_be_enabled()
+        expect(add).to_be_enabled(timeout=TIMEOUT_MS)
         add.check()
-    expect(add).to_be_checked()
-
+    expect(add).to_be_checked(timeout=TIMEOUT_MS)
     payment = add.locator(
-        'xpath=ancestor::*[.//input[@type="radio"] and '
-        'contains(., "Card Number")][1]'
+        'xpath=ancestor::*[.//input[@type="radio"] and contains(., "Card Number")][1]'
     )
-    expect(payment).to_have_count(1)
+    expect(payment).to_have_count(1, timeout=TIMEOUT_MS)
 
     def field_label(label):
-        return payment.get_by_text(
-            re.compile(r"^\s*" + re.escape(label) + r"\s*:\s*$", re.I)
-        ).filter(visible=True)
+        return payment.get_by_text(label).filter(visible=True)
 
-    def visible_control_if_unique(label, selector):
-        text = field_label(label)
-        if text.count() != 1:
-            return None
-        tag = "select" if selector == "select:visible" else "input"
-        adjacent = text.locator('xpath=following-sibling::*[1]')
-        controls = adjacent.locator(
-            f'xpath=self::{tag} | .//{tag}'
-        ).filter(visible=True)
-        if controls.count() != 1:
-            return None
-        return controls
+    field_context = "Add a new credit card"
+    diagnostic_locator = None
 
-    number_probe = visible_control_if_unique("Card Number", "input:visible")
-    type_probe = visible_control_if_unique("Card Type", "select:visible")
-    fields_unlocked = (
-        number_probe is not None
-        and type_probe is not None
-        and number_probe.is_editable()
-        and type_probe.is_enabled()
-    )
-    edit = payment.get_by_role("button", name="Edit Secure Fields", exact=True)
-    if not fields_unlocked:
+    def locator_state(locator):
         try:
-            expect(edit).to_have_count(1, timeout=TIMEOUT_MS)
-            expect(edit).to_be_visible(timeout=TIMEOUT_MS)
-            expect(edit).to_be_enabled(timeout=TIMEOUT_MS)
-            edit.click()
-        except (Error, AssertionError):
-            raise SensitiveDataError(
-                "Secure payment fields could not be unlocked; "
-                "card entry and Forward were not attempted."
+            found = locator.count()
+            visible = locator.is_visible() if found == 1 else False
+            enabled = locator.is_enabled() if found == 1 else False
+            return found, visible, enabled
+        except Exception:
+            return "unknown", "unknown", "unknown"
+
+    def controls(label, kind, count=1):
+        nonlocal field_context, diagnostic_locator
+        field_context = label
+        label_locator = field_label(re.compile(r"^\s*" + label + r"\s*:\s*$", re.I))
+        diagnostic_locator = label_locator
+        try:
+            expect(label_locator).to_have_count(1, timeout=TIMEOUT_MS)
+            adjacent = label_locator.locator("xpath=following-sibling::*[1]")
+            tag = "select" if kind == "select" else "input"
+            result = adjacent.locator(f"xpath=self::{tag} | .//{tag}").filter(
+                visible=True
+            )
+            diagnostic_locator = result
+            expect(result).to_have_count(count, timeout=TIMEOUT_MS)
+            return result
+        except (Error, AssertionError, ValueError) as exc:
+            found, visible, enabled = locator_state(diagnostic_locator)
+            raise BrowserWorkflowError(
+                f"Function _complete_payment_fields; stage=verifying EZ Enroll payment review; "
+                f"field={label}; locator_found={found}; visible={visible}; enabled={enabled}; "
+                f"validation=failed; exception={type(exc).__name__}."
             ) from None
 
-    def row_controls(label, selector, expected_count):
-        text = field_label(label)
-        expect(text).to_have_count(1, timeout=TIMEOUT_MS)
-        tag = "select" if selector == "select:visible" else "input"
-        # Live simulator: labels and controls are adjacent siblings in one
-        # shared grid. The nearest ancestor contains every card field.
-        # Keep the earlier table layout supported via its adjacent value cell.
-        adjacent = text.locator('xpath=following-sibling::*[1]')
-        controls = adjacent.locator(
-            f'xpath=self::{tag} | .//{tag}'
-        ).filter(visible=True)
-        expect(controls).to_have_count(expected_count, timeout=TIMEOUT_MS)
-        return controls
+    number_probe = controls(r"Card Number", "input")
+    type_probe = controls(r"Card Type", "select")
+    if not number_probe.is_editable() or not type_probe.is_enabled():
+        edit = payment.get_by_role("button", name="Edit Secure Fields", exact=True)
+        expect(edit).to_be_visible(timeout=TIMEOUT_MS)
+        expect(edit).to_be_enabled(timeout=TIMEOUT_MS)
+        edit.click()
 
-    payment_field_stage = "Card Type"
     try:
-        card_type = row_controls("Card Type", "select:visible", 1)
-        payment_field_stage = "Card Number"
-        inputs = 'input:visible:not([type="hidden"])'
-        number = row_controls("Card Number", inputs, 1)
-        payment_field_stage = "Card Holder Name"
-        name = row_controls("Card Holder Name", inputs, 1)
-        payment_field_stage = "CVV Code"
-        cvv = row_controls("CVV Code", inputs, 1)
-        payment_field_stage = "Expiration Date"
-        expiry = row_controls("Expiration Date", inputs, 2)
-        for label, field in (
-            ("Card Type", card_type), ("Card Number", number),
-            ("Card Holder Name", name), ("CVV Code", cvv),
-            ("Expiration Date", expiry.nth(0)),
-            ("Expiration Date", expiry.nth(1)),
+        card_type = controls(r"Card Type", "select")
+        number = controls(r"Card Number", "input")
+        name = controls(r"Card Holder Name", "input")
+        cvv = controls(r"CVV Code", "input")
+        expiration = controls(r"Expiration Date", "input", 2)
+        for control in (
+            card_type,
+            number,
+            name,
+            cvv,
+            expiration.nth(0),
+            expiration.nth(1),
         ):
-            payment_field_stage = label
-            expect(field).to_be_editable(timeout=TIMEOUT_MS)
-    except (Error, AssertionError):
-        raise SensitiveDataError(
-            f"Required secure payment field unavailable ({payment_field_stage}) after unlock; "
-            "card entry and Forward were not attempted."
+            expect(control).to_be_editable(timeout=TIMEOUT_MS)
+        field_context, diagnostic_locator = "Card Type", card_type
+        card_type.select_option(label=sensitive["card_type"])
+        expect(card_type.locator("option:checked")).to_have_text(sensitive["card_type"])
+        field_context, diagnostic_locator = "Card Number", number
+        fill_sensitive_field(number, sensitive["card_number"], "Card Number")
+        field_context, diagnostic_locator = "Card Holder Name", name
+        fill_sensitive_field(name, sensitive["cardholder_name"], "Card Holder Name")
+        field_context, diagnostic_locator = "CVV Code", cvv
+        fill_sensitive_field(cvv, sensitive["cvv"], "CVV")
+        field_context, diagnostic_locator = "Expiration Month", expiration.nth(0)
+        fill_sensitive_field(
+            expiration.nth(0), sensitive["expiration_month"], "Expiration Month"
+        )
+        field_context, diagnostic_locator = "Expiration Year", expiration.nth(1)
+        fill_sensitive_field(
+            expiration.nth(1), sensitive["expiration_year"], "Expiration Year"
+        )
+        print("PASS: Card information verified.")
+    except (Error, AssertionError, ValueError) as exc:
+        found, visible, enabled = locator_state(diagnostic_locator)
+        raise BrowserWorkflowError(
+            f"Function _complete_payment_fields; stage=verifying EZ Enroll payment review; "
+            f"field={field_context}; locator_found={found}; visible={visible}; enabled={enabled}; "
+            f"validation=failed; exception={type(exc).__name__}."
         ) from None
 
-    # Public dummy fixtures from the supplied simulator example.
-    # Actual card acceptance remains subject to the simulator's validation.
-    expect(card_type).to_be_enabled()
-    card_type.select_option(label="Visa")
-    fill_sensitive_field(number, "1234567890123456", "Card Number")
-    fill_sensitive_field(name, "DEMO CUSTOMER", "Card Holder Name")
-    fill_sensitive_field(cvv, "203", "CVV")
-    fill_sensitive_field(expiry.nth(0), "03", "Expiry Month")
-    fill_sensitive_field(expiry.nth(1), "2030", "Expiry Year")
-    billing_question = payment.get_by_text(
-        re.compile(r"Is the credit card billing address the same as service address", re.I)
-    ).filter(visible=True)
-    expect(billing_question).to_have_count(1)
-    billing = billing_question.locator('xpath=ancestor-or-self::*[count(.//input[@type="radio"])=2][1]')
-    billing_answer = order.get(
-        "Billing Same As Service", order.get("Mailing Same As Service")
+    
+
+
+US_STATE_ABBREVIATIONS = {
+    "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
+    "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",
+    "Florida": "FL", "Georgia": "GA", "Hawaii": "HI", "Idaho": "ID",
+    "Illinois": "IL", "Indiana": "IN", "Iowa": "IA", "Kansas": "KS",
+    "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
+    "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
+    "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV",
+    "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY",
+    "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK",
+    "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI", "South Carolina": "SC",
+    "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX", "Utah": "UT",
+    "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV",
+    "Wisconsin": "WI", "Wyoming": "WY", "District of Columbia": "DC",
+}
+
+
+def _complete_billing_address(page, checkout, order):
+    """Select billing address behavior and validate conditional customer data."""
+
+    answer = order.get(
+        "Credit Card Billing Address Same as Service",
+        order.get(
+            "Billing Same As Service",
+            order.get("billing_same_as_service"),
+        ),
     )
-    if billing_answer not in ("Yes", "No"):
-        raise SensitiveDataError(
-            "Billing Same As Service must be Yes or No in the customer order."
-        )
-    billing_choice = named_choice(billing, "radio", billing_answer)
-    if not billing_choice.is_checked():
-        expect(billing_choice).to_be_enabled()
-        billing_choice.check()
-    expect(billing_choice).to_be_checked()
 
-    expect(read_box).to_be_checked()
-    expect(add).to_be_checked()
-    expect(card_type.locator("option:checked")).to_have_text("Visa")
-    if checkout.locator(":visible:invalid").count():
-        raise SensitiveDataError(
-            "Payment fields failed browser validation; Forward was not clicked."
+    if isinstance(answer, bool):
+        answer = "Yes" if answer else "No"
+
+    if isinstance(answer, str):
+        answer = answer.strip().capitalize()
+
+    if answer not in ("Yes", "No"):
+        raise BrowserWorkflowError(
+            "Billing address selection missing; validation=failed."
         )
 
-    click_forward(checkout)
-    # Confirm the navigation destination, rather than relying on a heading
-    # that differs between EZ Enroll Yes and No render states.
-    expect(page).to_have_title("Order Summary", timeout=30_000)
-    print("PASS: Sample payment entered with blur; Order Summary opened. Final order NOT submitted.")
+    # Locate billing question.
+    question = checkout.get_by_text(
+        re.compile(
+            r"Is the credit card billing address the same as service address\?",
+            re.I,
+        )
+    ).filter(visible=True)
+
+    expect(question).to_have_count(1, timeout=TIMEOUT_MS)
+
+    billing_section = question.locator(
+        'xpath=ancestor-or-self::*[count(.//input[@type="radio"])=2][1]'
+    )
+
+    # Select Yes or No.
+    choice = named_choice(billing_section, "radio", answer)
+
+    if not choice.is_checked():
+        choice.check()
+
+    expect(choice).to_be_checked(timeout=TIMEOUT_MS)
+
+    print(f"PASS: Billing address option selected: {answer}")
+
+    # YES: No separate billing fields required.
+    # YES: Skip separate billing address fields.
+    if answer == "Yes":
+        print("PASS: Billing address is same as service address.")
+        print("PASS: Skipping separate billing address fields.")
+
+    # NO: Fill separate billing address fields.
+    else:
+
+        billing_data = {
+            "Address": order.get("Billing Address"),
+            "City": order.get("Billing City"),
+            "State": order.get("Billing State"),
+            "Zip": order.get("Billing ZIP"),
+        }
+
+        missing = [
+            field
+            for field, value in billing_data.items()
+            if not isinstance(value, str) or not value.strip()
+        ]
+
+        if missing:
+            raise BrowserWorkflowError(
+                "Billing address validation failed: required customer data is missing ("
+                + ", ".join(missing) + ")."
+            )
+
+        address = checkout.locator('input[placeholder="Address"]')
+        city = checkout.locator('input[placeholder="City"]')
+        zip_code = checkout.locator('input[placeholder="Zip"]')
+        fields_deadline = time.monotonic() + TIMEOUT_MS / 1000
+        while (
+            (address.count() != 1 or city.count() != 1 or zip_code.count() != 1)
+            and time.monotonic() < fields_deadline
+        ):
+            page.wait_for_timeout(100)
+
+        for field in (address, city, zip_code):
+            expect(field).to_be_visible(timeout=TIMEOUT_MS)
+            expect(field).to_be_editable(timeout=TIMEOUT_MS)
+
+        # Fill Address.
+        address.fill(billing_data["Address"])
+        expect(address).to_have_value(billing_data["Address"])
+
+        # Fill City.
+        city.fill(billing_data["City"])
+        expect(city).to_have_value(billing_data["City"])
+
+        state_value = billing_data["State"].strip()
+        state_abbreviation = US_STATE_ABBREVIATIONS.get(
+            state_value.title(), state_value.upper()
+        )
+        state_dropdown = checkout.locator("select:visible").filter(
+            has=checkout.locator(f'option:has-text("{state_abbreviation}")')
+        )
+        expect(state_dropdown).to_have_count(1, timeout=TIMEOUT_MS)
+        expect(state_dropdown).to_be_visible(timeout=TIMEOUT_MS)
+        expect(state_dropdown).to_be_enabled(timeout=TIMEOUT_MS)
+        state_dropdown.select_option(label=state_abbreviation)
+        expect(state_dropdown.locator("option:checked")).to_have_text(
+            state_abbreviation
+        )
+
+        # Fill ZIP.
+        zip_code.fill(billing_data["Zip"])
+        expect(zip_code).to_have_value(billing_data["Zip"])
+
+        print("PASS: Billing Address filled and verified.")
+        print("PASS: Billing City filled and verified.")
+        print("PASS: Billing State selected and verified.")
+        print("PASS: Billing ZIP filled and verified.")
+        print("PASS: All billing fields validated.")
+
+def _navigate_payment_forward(page):
+    """Find the single visible Forward control in the page or checkout iframe."""
+    checkout = page.frame_locator("#checkoutContent")
+    frame_forward = checkout.get_by_role(
+        "button", name=re.compile(r"^Forward\s*>$", re.I)
+    ).filter(visible=True)
+    page_forward = page.get_by_role(
+        "button", name=re.compile(r"^Forward\s*>$", re.I)
+    ).filter(visible=True)
+    frame_count = frame_forward.count()
+    page_count = page_forward.count()
+    if frame_count + page_count != 1:
+        raise BrowserWorkflowError(
+            "Forward button locator: expected exactly one visible button; "
+            f"found={frame_count + page_count}; validation=failed."
+        )
+    forward = frame_forward if frame_count == 1 else page_forward
+    if not forward.is_enabled():
+        raise BrowserWorkflowError(
+            "Forward button is disabled; navigation was not attempted."
+        )
+    forward.scroll_into_view_if_needed(timeout=TIMEOUT_MS)
+    forward.click(timeout=TIMEOUT_MS)
+
+    authorization = re.compile(r"authorization", re.I)
+    start_url = page.url
+    deadline = time.monotonic() + TIMEOUT_MS / 1000
+    while time.monotonic() < deadline:
+        if page.url != start_url:
+            break
+        if (
+            page.get_by_text(authorization).filter(visible=True).count()
+            or checkout.get_by_text(authorization).filter(visible=True).count()
+        ):
+            break
+        page.wait_for_timeout(100)
+    else:
+        raise BrowserWorkflowError(
+            "Forward navigation failed: Authorization stage was not confirmed."
+        )
+    print("PASS: Forward navigation confirmed at Authorization stage.")
+
+
+def verify_ez_enroll_payment(page, order, sensitive=None):
+    """Validate EZ Enroll payment review, billing decision, and next stage."""
+    if str(order.get("EZ Enroll", "")).strip().lower() != "yes":
+        return
+    try:
+        _complete_payment_fields(page, order, sensitive)
+        checkout = page.frame_locator("#checkoutContent")
+        _complete_billing_address(page, checkout, order)
+        _navigate_payment_forward(page)
+    finally:
+        _clear_payment_values(sensitive)
+
+
+def complete_sample_payment(page, order, sensitive=None):
+    """Validate payment fields and billing, then advance once to Authorization."""
+    try:
+        _complete_payment_fields(page, order, sensitive)
+        checkout = page.frame_locator("#checkoutContent")
+        _complete_billing_address(page, checkout, order)
+        _navigate_payment_forward(page)
+    finally:
+        _clear_payment_values(sensitive)
 
 
 def human_pause(min_seconds=0.8, max_seconds=2.0):

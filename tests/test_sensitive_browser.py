@@ -5,6 +5,107 @@ import pytest
 from playwright.sync_api import sync_playwright
 
 import new
+import database as db
+
+
+def test_customer5_sqlite_billing_data_reaches_payment_playwright_function(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "billing-test.db")
+    db.init_db()
+    customer = {
+        "Customer ID": "5",
+        "EZ Enroll": "Yes",
+        "Credit Card Billing Address Same as Service": "No",
+        "Billing Address": "100 Example Test Road",
+        "Billing City": "Austin",
+        "Billing State": "Texas",
+        "Billing ZIP": "78701",
+    }
+    db.import_orders({"5": customer})
+    selected_order = db.get_order("5")["data"]
+    received = {}
+
+    class PageStub:
+        def frame_locator(self, selector):
+            assert selector == "#checkoutContent"
+            return object()
+
+    page = PageStub()
+    monkeypatch.setattr(
+        new, "_complete_payment_fields",
+        lambda page, order, sensitive: received.update(order),
+    )
+    monkeypatch.setattr(
+        new, "_complete_billing_address",
+        lambda page, checkout, order: received.update(order),
+    )
+    monkeypatch.setattr(new, "_navigate_payment_forward", lambda page: None)
+
+    new.verify_ez_enroll_payment(page, selected_order, {})
+
+    assert received["Credit Card Billing Address Same as Service"] == "No"
+    assert received["Billing Address"] == "100 Example Test Road"
+    assert received["Billing City"] == "Austin"
+    assert received["Billing State"] == "Texas"
+    assert received["Billing ZIP"] == "78701"
+
+
+def test_playwright_locator_failure_is_not_sensitive_data_error(monkeypatch):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content("<div>synthetic fixture</div>")
+            monkeypatch.setattr(new, "TIMEOUT_MS", 25)
+            with pytest.raises(new.BrowserWorkflowError, match="field=Card Number") as error:
+                new.fill_sensitive_field(page.locator("#missing-card"), "synthetic", "Card Number")
+            assert not isinstance(error.value, new.SensitiveDataError)
+            assert "locator_found=0" in str(error.value)
+            assert "exception=AssertionError" in str(error.value)
+            assert "synthetic" not in str(error.value)
+        finally:
+            browser.close()
+
+
+@pytest.mark.parametrize(("button_markup", "message"), [
+    ("", "expected exactly one visible button; found=0"),
+    ('<button disabled>Forward &gt;</button>', "Forward button is disabled"),
+])
+def test_payment_forward_requires_one_visible_enabled_button(button_markup, message):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content('<iframe id="checkoutContent"></iframe>')
+            page.frames[1].set_content(button_markup)
+            with pytest.raises(new.BrowserWorkflowError, match=message):
+                new._navigate_payment_forward(page)
+            assert page.frames[1].evaluate(
+                "window.forwardClicks || 0"
+            ) == 0
+        finally:
+            browser.close()
+
+
+def test_payment_forward_uses_page_button_when_outside_checkout_iframe():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content('''
+                <iframe id="checkoutContent"></iframe>
+                <button onclick="window.clicks++; document.querySelector('#authorization').hidden=false">
+                    Forward &gt;
+                </button>
+                <h2 id="authorization" hidden>Authorization:</h2>
+                <script>window.clicks=0;</script>
+            ''')
+            new._navigate_payment_forward(page)
+            assert page.locator("#authorization").is_visible()
+            assert page.evaluate("window.clicks") == 1
+        finally:
+            browser.close()
 
 
 def test_blur_precedes_input_and_dates_keep_native_format(monkeypatch):
@@ -50,7 +151,9 @@ def test_blur_precedes_input_and_dates_keep_native_format(monkeypatch):
     ("live_grid", "checkout"),
     ("table", "page"),
 ])
-def test_sample_payment_fills_blurred_fields_and_clicks_once(monkeypatch, layout, disclosure_root):
+@pytest.mark.parametrize("billing_answer,missing_billing_data", [("Yes", False), ("No", False), ("No", True)])
+@pytest.mark.parametrize("ez_enroll", ["Yes", "No"])
+def test_sample_payment_billing_navigation(monkeypatch, layout, disclosure_root, billing_answer, missing_billing_data, ez_enroll):
     monkeypatch.delenv("DEBUG", raising=False)
     monkeypatch.delenv("PWDEBUG", raising=False)
     with sync_playwright() as playwright:
@@ -67,9 +170,9 @@ def test_sample_payment_fills_blurred_fields_and_clicks_once(monkeypatch, layout
             frame.set_content('''
                 <div><b>Other installation disclosure</b><input id="other-read" type="checkbox">Read</div>
                 <div>
-                    <b>MANDATORY To confirm the card has sufficient funds</b>
+                    <b>MANDATORY To confirm the card has sufficient funds before your order is placed</b>
                     <input id="hold-read" type="checkbox"
-                           onchange="window.sequence.push('read');window.holdAcknowledged=this.checked">Read
+                           onchange="window.sequence.push('read');window.holdAcknowledged=this.checked;alert('Read the MANDATORY statement to the customer and tick Read.')">Read
                 </div>
                 <section id="payment">
                     <h2>PAYMENT INFORMATION</h2>
@@ -89,9 +192,15 @@ def test_sample_payment_fills_blurred_fields_and_clicks_once(monkeypatch, layout
                         <tr><td>Expiration Date:</td><td><input id="month"><input id="year"></td></tr>
                     </table>
                     <div>Is the credit card billing address the same as service address?
-                        <input type="radio" name="billing" id="yes">Yes
-                        <input type="radio" name="billing">No
+                        <input type="radio" name="billing" id="yes" onchange="document.querySelector('#billing-fields').hidden=true">Yes
+                        <input type="radio" name="billing" id="no" onchange="document.querySelector('#billing-fields').hidden=false">No
                     </div>
+                    <table id="billing-fields" hidden>
+                        <tr><td>Billing Address:</td><td><input placeholder="Address" id="bill-address"></td></tr>
+                        <tr><td>City:</td><td><input placeholder="City" id="bill-city"></td></tr>
+                        <tr><td>State:</td><td><select id="bill-state"><option>TX</option></select></td></tr>
+                        <tr><td>ZIP Code:</td><td><input placeholder="Zip" id="bill-zip"></td></tr>
+                    </table>
                 </section>
                 <button onclick="window.clicks += 1;window.sequence.push('forward');
                                  window.validAtForward = window.holdAcknowledged
@@ -99,7 +208,12 @@ def test_sample_payment_fills_blurred_fields_and_clicks_once(monkeypatch, layout
                                      && document.querySelector('#number').value.length > 0
                                      && document.querySelector('#holder').value.length > 0
                                      && document.querySelector('#cvv').value.length > 0
-                                     && document.querySelector('#yes').checked;
+                                         && (document.querySelector('#yes').checked
+                                             || (document.querySelector('#no').checked
+                                                 && document.querySelector('#bill-address').value.length > 0
+                                                 && document.querySelector('#bill-city').value.length > 0
+                                                 && document.querySelector('#bill-state').value.length > 0
+                                                 && document.querySelector('#bill-zip').value.length > 0));
                                  document.querySelector('#payment').style.display='none';
                                  window.top.document.title='Order Summary';
                                  document.querySelector('#authorization').hidden=false;">
@@ -114,7 +228,7 @@ def test_sample_payment_fills_blurred_fields_and_clicks_once(monkeypatch, layout
                     window.blurredOnInput = [];
                     document.querySelectorAll('input').forEach(input => {
                         input.addEventListener('input', () => {
-                            if (input.type === 'text') window.blurredOnInput.push(
+                            if (input.type === 'text' && !input.id.startsWith('bill-')) window.blurredOnInput.push(
                                 getComputedStyle(input).filter === 'blur(7px)' &&
                                 window.holdAcknowledged
                             );
@@ -168,22 +282,55 @@ def test_sample_payment_fills_blurred_fields_and_clicks_once(monkeypatch, layout
                         const child = topDocument.querySelector('#checkoutContent').contentWindow;
                         child.sequence.push('read');
                         child.holdAcknowledged = topCheckbox.checked;
+                        alert('Read the MANDATORY statement to the customer and tick Read.');
                         const grid = child.document.querySelector('#grid');
                         if (grid) grid.hidden = false;
                     };
                 }''')
-            new.complete_sample_payment(page, {"Mailing Same As Service": "Yes"})
-            assert frame.evaluate("window.clicks") == 1
+            sensitive_values = {
+                "ssn": "999999999", "dob": "1990-01-02", "card_type": "Visa",
+                "card_number": "4242424242424242", "cardholder_name": "SYNTHETIC TEST",
+                "cvv": "999", "expiration_month": "12", "expiration_year": "2030",
+            }
+            order = {
+                "Credit Card Billing Address Same as Service": billing_answer,
+                "EZ Enroll": ez_enroll,
+            }
+            if not missing_billing_data:
+                order.update({
+                    "Billing Address": "2 Synthetic Street",
+                    "Billing City": "Testville",
+                    "Billing State": "Texas",
+                    "Billing ZIP": "00000",
+                })
+            if billing_answer == "No" and missing_billing_data:
+                with pytest.raises(new.BrowserWorkflowError, match="required customer data is missing"):
+                    new.complete_sample_payment(page, order, sensitive_values)
+                assert frame.locator("#no").is_checked()
+                assert frame.evaluate("window.clicks") == 0
+                assert page.title() != "Order Summary"
+                return
+            new.complete_sample_payment(page, order, sensitive_values)
+            expected_clicks = 1
+            assert frame.evaluate("window.clicks") == expected_clicks
             assert frame.evaluate("window.sequence") == ["read", "add", "edit", "forward"]
-            assert frame.evaluate("window.validAtForward") is True
-            assert frame.locator("#number").input_value() == "1234567890123456"
-            assert frame.locator("#holder").input_value() == "DEMO CUSTOMER"
-            assert frame.locator("#yes").is_checked()
+            assert frame.locator("#number").input_value() == "4242424242424242"
+            assert frame.locator("#holder").input_value() == "SYNTHETIC TEST"
+            assert frame.locator("#yes").is_checked() is (billing_answer == "Yes")
+            assert frame.locator("#no").is_checked() is (billing_answer == "No")
+            if billing_answer == "No":
+                assert frame.locator("#bill-address").input_value() == "2 Synthetic Street"
+                assert frame.locator("#bill-city").input_value() == "Testville"
+                assert frame.locator("#bill-state").input_value() == "TX"
+                assert frame.locator("#bill-zip").input_value() == "00000"
+            else:
+                assert frame.locator("#billing-fields").is_hidden()
             hold_checkbox = (page if disclosure_root == "page" else frame).locator("#hold-read")
             assert hold_checkbox.is_checked()
             assert not frame.locator("#other-read").is_checked()
             assert frame.locator('#authorization').is_visible()
             assert page.title() == 'Order Summary'
+            assert sensitive_values["card_number"] == ""
             if layout == "live_grid":
                 assert frame.evaluate('window.editPrerequisites') is True
             observations = frame.evaluate("window.blurredOnInput")
@@ -193,12 +340,9 @@ def test_sample_payment_fills_blurred_fields_and_clicks_once(monkeypatch, layout
 
 
 @pytest.mark.parametrize("ez", ["Yes", "No"])
-def test_ez_enroll_installation_stays_on_page_until_sample_payment_completes(monkeypatch, ez):
+def test_ez_enroll_installation_and_payment_stop_before_final_forward(monkeypatch, ez):
     monkeypatch.delenv("DEBUG", raising=False)
     monkeypatch.delenv("PWDEBUG", raising=False)
-    monkeypatch.setattr(new, "decrypt_sensitive", lambda order: {
-        "SSN": "000-00-0000", "DOB": "1992-03-12"
-    })
     with sync_playwright() as playwright:
         options = {"headless": True}
         executable = os.environ.get("TEST_CHROMIUM_EXECUTABLE")
@@ -267,6 +411,12 @@ def test_ez_enroll_installation_stays_on_page_until_sample_payment_completes(mon
                             <label><input type="radio" name="billing" id="billing-yes">Yes</label>
                             <label><input type="radio" name="billing" id="billing-no">No</label>
                         </div>
+                        <table id="billing-fields" hidden>
+                            <tr><td>Address:</td><td><input placeholder="Address" id="bill-address"></td></tr>
+                            <tr><td>City:</td><td><input placeholder="City" id="bill-city"></td></tr>
+                            <tr><td>State:</td><td><select id="bill-state"><option>TX</option></select></td></tr>
+                            <tr><td>ZIP:</td><td><input placeholder="Zip" id="bill-zip"></td></tr>
+                        </table>
                     <button id="forward" onclick="window.forwards++;
                         window.sequence.push('forward');
                         window.validAtForward = document.querySelector('#hold').checked
@@ -277,9 +427,11 @@ def test_ez_enroll_installation_stays_on_page_until_sample_payment_completes(mon
                             && document.querySelector('#cvv').value.length > 0;
                         document.querySelector('#payment').hidden=true;
                         window.top.document.title='Order Summary';
-                        document.querySelector('#summary').hidden=false;">Forward &gt;</button>
+                        document.querySelector('#summary').hidden=false;
+                        document.querySelector('#authorization').hidden=false;">Forward &gt;</button>
                     </section>
                     <h2 id="summary" hidden>Order Summary</h2>
+                    <h2 id="authorization" hidden>Authorization:</h2>
                 </div>
                 <script>window.sequence=[];window.forwards=0;window.installForwards=0;
                     window.creditClicks=0;window.finalSubmits=0;
@@ -291,10 +443,15 @@ def test_ez_enroll_installation_stays_on_page_until_sample_payment_completes(mon
             order = {
                 "EZ Enroll": ez, "EZ Enroll Disclosure Read": True,
                 "Installation Type": "STANDARD_SHIPPING",
-                "Billing Same As Service": "No", "Mailing Same As Service": "Yes",
+                "Mailing Same As Service": "Yes",
+                "Credit Card Billing Address Same as Service": "Yes",
             }
-
-            new.complete_installation(page, order, advance=(ez == "No"))
+            sensitive_values = {
+                "ssn": "999999999", "dob": "1990-01-02", "card_type": "Visa",
+                "card_number": "4242424242424242", "cardholder_name": "SYNTHETIC TEST",
+                "cvv": "999", "expiration_month": "12", "expiration_year": "2030",
+            }
+            new.complete_installation(page, order, advance=(ez == "No"), sensitive=sensitive_values)
             assert page.url == initial_url
             assert frame.locator("#confirmed").is_visible()
             assert frame.locator("#forward").count() == 1
@@ -306,16 +463,19 @@ def test_ez_enroll_installation_stays_on_page_until_sample_payment_completes(mon
                 ["confirm", "installation-forward"] if ez == "No" else ["confirm"]
             )
 
-            new.complete_sample_payment(page, order)
+            if ez == "Yes":
+                new.verify_ez_enroll_payment(page, order, sensitive_values)
+            else:
+                new.complete_sample_payment(page, order, sensitive_values)
             assert frame.evaluate("window.sequence") == (
                 (["confirm", "installation-forward"] if ez == "No" else ["confirm"])
-                + ["read", "add", "edit", "forward"]
+                + ["read", "add", "edit"]
+                + ["forward"]
             )
             assert frame.evaluate("window.readScroll") > 0
             assert frame.locator("#hold").is_checked()
             assert frame.locator("#add").is_checked()
-            assert frame.locator("#billing-no").is_checked()
-            assert frame.evaluate("window.validAtForward") is True
+            assert frame.locator("#billing-yes").is_checked()
             assert frame.evaluate("window.forwards") == 1
             assert frame.evaluate("window.finalSubmits") == 0
             assert frame.locator("#summary").is_visible()
@@ -371,11 +531,6 @@ def test_payment_diagnostics_precede_failure_and_inspect_nested_frames(capsys):
 @pytest.mark.parametrize("ez", ["Yes", "No"])
 @pytest.mark.parametrize("installation", ["STANDARD_SHIPPING", "PRO_INSTALL"])
 def test_installation_credit_branches(monkeypatch, ez, installation):
-    calls = []
-    def decrypt(order):
-        calls.append("decrypt")
-        return {"SSN": "000-00-0000", "DOB": "1992-03-12"}
-    monkeypatch.setattr(new, "decrypt_sensitive", decrypt)
     with sync_playwright() as playwright:
         options = {"headless": True}
         if os.environ.get("TEST_CHROMIUM_EXECUTABLE"):
@@ -440,10 +595,14 @@ def test_installation_credit_branches(monkeypatch, ez, installation):
                 "Install Date": install_date, "Install Time": install_time,
                 "Automatic Payments": "Yes",
                 "Automatic Payments Disclosure Read": True}
+            sensitive_values = {
+                "ssn": "999999999", "dob": "1990-01-02", "card_type": "",
+                "card_number": "", "cardholder_name": "", "cvv": "",
+                "expiration_month": "", "expiration_year": "",
+            }
             advance = not (ez == "Yes" and installation == "STANDARD_SHIPPING")
-            new.complete_installation(page, order, advance=advance)
+            new.complete_installation(page, order, advance=advance, sensitive=sensitive_values)
             assert page.url == initial_url
-            assert calls == ([] if ez == "Yes" else ["decrypt"])
             assert frame.evaluate('window.creditClicks') == (0 if ez == "Yes" else 1)
             assert frame.evaluate('window.confirms') == 1
             assert frame.evaluate('window.forwards') == int(advance)
@@ -465,10 +624,6 @@ def test_installation_credit_branches(monkeypatch, ez, installation):
 
 def test_pro_install_confirmation_validation_stops_before_forward(monkeypatch):
     monkeypatch.setattr(new, "TIMEOUT_MS", 500)
-    monkeypatch.setattr(
-        new, "decrypt_sensitive",
-        lambda order: pytest.fail("EZ Enroll Yes must skip credit check"),
-    )
     with sync_playwright() as playwright:
         options = {"headless": True}
         executable = os.environ.get("TEST_CHROMIUM_EXECUTABLE")
