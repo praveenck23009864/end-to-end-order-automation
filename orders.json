@@ -37,8 +37,6 @@
     "Shipping Same As Service": "Yes",
     "Phone Number": "2025550141",
     "Email Address": "alex.taylor@example.com",
-    "SSN": "000-00-0000",
-    "DOB": "1992-03-12",
     "Installation Type": "STANDARD_SHIPPING",
     "Install Date": "",
     "Install Time": ""
@@ -61,7 +59,9 @@
     "Move Date": "2026-11-15",
     "Lead ID": "",
     "Customer Type": "Transfer",
-    "Current Providers": ["ProviderXX"],
+    "Current Providers": [
+      "ProviderXX"
+    ],
     "Provider": "ProviderXX",
     "Provider ID": "15501641",
     "Plan": "300 Mbps (5-YEAR PRICE GUARANTEE)",
@@ -82,8 +82,6 @@
     "Shipping Same As Service": "Yes",
     "Phone Number": "2025550142",
     "Email Address": "jordan.lee@example.com",
-    "SSN": "000-00-0000",
-    "DOB": "1988-07-21",
     "Installation Type": "PRO_INSTALL",
     "Install Date": "2026-11-16",
     "Install Time": "Morning"
@@ -127,8 +125,6 @@
     "Shipping Same As Service": "Yes",
     "Phone Number": "2025550143",
     "Email Address": "morgan.reed@example.com",
-    "SSN": "000-00-0000",
-    "DOB": "1985-11-08",
     "Installation Type": "PRO_INSTALL",
     "Install Date": "2026-11-21",
     "Install Time": "Evening"
@@ -150,7 +146,9 @@
     "Moving?": "No",
     "Lead ID": "TEST-1004",
     "Customer Type": "Transfer",
-    "Current Providers": ["ProviderAT IG"],
+    "Current Providers": [
+      "ProviderAT IG"
+    ],
     "Provider": "ProviderXX",
     "Provider ID": "15501641",
     "Plan": "1 Gig (1-YEAR PRICING)",
@@ -171,8 +169,6 @@
     "Shipping Same As Service": "Yes",
     "Phone Number": "2025550147",
     "Email Address": "casey.parker@example.com",
-    "SSN": "000-00-0000",
-    "DOB": "1990-05-15",
     "Installation Type": "PRO_INSTALL",
     "Install Date": "2026-11-20",
     "Install Time": "Afternoon"

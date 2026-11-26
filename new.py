@@ -246,6 +246,31 @@ def click_forward(scope):
     button.click()
 
 
+def _click_installation_forward(page):
+    """Advance from confirmed installation to the payment stage once."""
+    candidates = []
+    for frame in page.frames:
+        forward = frame.get_by_role(
+            "button", name=re.compile(r"^Forward\s*>$", re.I)
+        ).filter(visible=True)
+        count = forward.count()
+        if count:
+            candidates.append((forward, count))
+    count = sum(item_count for _, item_count in candidates)
+    if count != 1:
+        raise SensitiveDataError(
+            "Installation Forward locator: expected exactly one visible button; "
+            f"found={count}; payment was not attempted."
+        )
+    forward = candidates[0][0]
+    if not forward.is_enabled():
+        raise SensitiveDataError(
+            "Installation Forward button is disabled; payment was not attempted."
+        )
+    forward.scroll_into_view_if_needed(timeout=TIMEOUT_MS)
+    forward.click(timeout=TIMEOUT_MS)
+
+
 def pause_for_review(message):
     try:
         input(message)
@@ -341,11 +366,47 @@ def confirm_address(page):
         )
         .filter(visible=True)
     )
+    if ready.count() == 0 and detect_a1_address_not_found(page):
+        return
     expect(ready).to_have_count(1, timeout=30_000)
     expect(ready).to_be_visible()
     forward_button(page).click()
     expect(ready).to_be_hidden(timeout=30_000)
     print("PASS: Address matched; clicked Forward.")
+
+
+def detect_a1_address_not_found(page):
+    """
+    Detect A1: Address not found with suggestions.
+    Returns True when the expected A1 result is displayed.
+    """
+
+    deadline = time.monotonic() + 5
+
+    while time.monotonic() < deadline:
+        for frame in page.frames:
+            try:
+                dialog_text = frame.locator("body").inner_text(timeout=2000)
+
+                if re.search(r"Address Not Matched", dialog_text, re.IGNORECASE):
+                    suggestions = frame.locator("button").filter(
+                        has_text=re.compile(r"\b99901\b", re.IGNORECASE)
+                    )
+
+                    if suggestions.count() >= 1:
+                        print(
+                            "EXPECTED RESULT: "
+                            "Address not found; suggestions displayed",
+                            flush=True,
+                        )
+                        return True
+
+            except Exception:
+                continue
+
+        page.wait_for_timeout(200)
+
+    return False
 
 
 def named_choice(scope, kind, label):
@@ -1288,7 +1349,7 @@ def complete_installation(page, order, *, advance=True, sensitive=None):
     if sample_payment:
         _log_payment_state(page, "after installation confirmation")
     if advance:
-        click_forward(checkout)
+        _click_installation_forward(page)
         if sample_payment:
             _log_payment_state(page, "after installation Forward")
             if order.get("EZ Enroll") == "No":
@@ -1349,7 +1410,9 @@ def _complete_payment_disclosure(page):
         raise BrowserWorkflowError(
             "Payment disclosure locator: expected exactly one complete disclosure; validation=failed."
         )
-    disclosure_text = frame_disclosure if frame_disclosure.count() == 1 else page_disclosure
+    disclosure_text = (
+        frame_disclosure if frame_disclosure.count() == 1 else page_disclosure
+    )
     disclosure_text.scroll_into_view_if_needed(timeout=TIMEOUT_MS)
     expect(disclosure_text).to_be_visible(timeout=TIMEOUT_MS)
     whole_disclosure = " ".join(disclosure_text.inner_text().split())
@@ -1506,23 +1569,59 @@ def _complete_payment_fields(page, order, sensitive):
             f"validation=failed; exception={type(exc).__name__}."
         ) from None
 
-    
-
 
 US_STATE_ABBREVIATIONS = {
-    "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
-    "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",
-    "Florida": "FL", "Georgia": "GA", "Hawaii": "HI", "Idaho": "ID",
-    "Illinois": "IL", "Indiana": "IN", "Iowa": "IA", "Kansas": "KS",
-    "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD",
-    "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS",
-    "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV",
-    "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY",
-    "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK",
-    "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI", "South Carolina": "SC",
-    "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX", "Utah": "UT",
-    "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV",
-    "Wisconsin": "WI", "Wyoming": "WY", "District of Columbia": "DC",
+    "Alabama": "AL",
+    "Alaska": "AK",
+    "Arizona": "AZ",
+    "Arkansas": "AR",
+    "California": "CA",
+    "Colorado": "CO",
+    "Connecticut": "CT",
+    "Delaware": "DE",
+    "Florida": "FL",
+    "Georgia": "GA",
+    "Hawaii": "HI",
+    "Idaho": "ID",
+    "Illinois": "IL",
+    "Indiana": "IN",
+    "Iowa": "IA",
+    "Kansas": "KS",
+    "Kentucky": "KY",
+    "Louisiana": "LA",
+    "Maine": "ME",
+    "Maryland": "MD",
+    "Massachusetts": "MA",
+    "Michigan": "MI",
+    "Minnesota": "MN",
+    "Mississippi": "MS",
+    "Missouri": "MO",
+    "Montana": "MT",
+    "Nebraska": "NE",
+    "Nevada": "NV",
+    "New Hampshire": "NH",
+    "New Jersey": "NJ",
+    "New Mexico": "NM",
+    "New York": "NY",
+    "North Carolina": "NC",
+    "North Dakota": "ND",
+    "Ohio": "OH",
+    "Oklahoma": "OK",
+    "Oregon": "OR",
+    "Pennsylvania": "PA",
+    "Rhode Island": "RI",
+    "South Carolina": "SC",
+    "South Dakota": "SD",
+    "Tennessee": "TN",
+    "Texas": "TX",
+    "Utah": "UT",
+    "Vermont": "VT",
+    "Virginia": "VA",
+    "Washington": "WA",
+    "West Virginia": "WV",
+    "Wisconsin": "WI",
+    "Wyoming": "WY",
+    "District of Columbia": "DC",
 }
 
 
@@ -1597,7 +1696,8 @@ def _complete_billing_address(page, checkout, order):
         if missing:
             raise BrowserWorkflowError(
                 "Billing address validation failed: required customer data is missing ("
-                + ", ".join(missing) + ")."
+                + ", ".join(missing)
+                + ")."
             )
 
         address = checkout.locator('input[placeholder="Address"]')
@@ -1605,9 +1705,8 @@ def _complete_billing_address(page, checkout, order):
         zip_code = checkout.locator('input[placeholder="Zip"]')
         fields_deadline = time.monotonic() + TIMEOUT_MS / 1000
         while (
-            (address.count() != 1 or city.count() != 1 or zip_code.count() != 1)
-            and time.monotonic() < fields_deadline
-        ):
+            address.count() != 1 or city.count() != 1 or zip_code.count() != 1
+        ) and time.monotonic() < fields_deadline:
             page.wait_for_timeout(100)
 
         for field in (address, city, zip_code):
@@ -1647,39 +1746,93 @@ def _complete_billing_address(page, checkout, order):
         print("PASS: Billing ZIP filled and verified.")
         print("PASS: All billing fields validated.")
 
+
 def _navigate_payment_forward(page):
-    """Find the single visible Forward control in the page or checkout iframe."""
-    checkout = page.frame_locator("#checkoutContent")
-    frame_forward = checkout.get_by_role(
-        "button", name=re.compile(r"^Forward\s*>$", re.I)
-    ).filter(visible=True)
-    page_forward = page.get_by_role(
-        "button", name=re.compile(r"^Forward\s*>$", re.I)
-    ).filter(visible=True)
-    frame_count = frame_forward.count()
-    page_count = page_forward.count()
-    if frame_count + page_count != 1:
+    """
+    Wait for exactly one visible Forward button across all frames.
+    Click it once and verify that the Authorization stage appears.
+    """
+
+    forward_pattern = re.compile(r"^\s*Forward\s*>?\s*$", re.IGNORECASE)
+
+    # Wait for the simulator to render the Forward button.
+    deadline = time.monotonic() + TIMEOUT_MS / 1000
+    forward = None
+
+    while time.monotonic() < deadline:
+        forward_matches = []
+
+        for frame in page.frames:
+            buttons = frame.get_by_role("button", name=forward_pattern).filter(
+                visible=True
+            )
+
+            count = buttons.count()
+
+            if count:
+                forward_matches.append((buttons, count))
+
+        total = sum(count for _, count in forward_matches)
+
+        if total == 1:
+            forward = forward_matches[0][0]
+            break
+
+        if total > 1:
+            raise BrowserWorkflowError(
+                "Forward button locator: expected exactly one "
+                f"visible button; found={total}; validation=failed."
+            )
+
+        page.wait_for_timeout(200)
+
+    if forward is None:
         raise BrowserWorkflowError(
-            "Forward button locator: expected exactly one visible button; "
-            f"found={frame_count + page_count}; validation=failed."
+            "Forward button locator: expected exactly one visible "
+            "button; found=0; button did not appear before timeout."
         )
-    forward = frame_forward if frame_count == 1 else page_forward
+
+    # Verify that the button can be clicked.
     if not forward.is_enabled():
         raise BrowserWorkflowError(
             "Forward button is disabled; navigation was not attempted."
         )
+
     forward.scroll_into_view_if_needed(timeout=TIMEOUT_MS)
+
+    # Click only once.
     forward.click(timeout=TIMEOUT_MS)
 
+    print("PASS: Payment Forward button clicked.")
+
+    # Confirm that the next stage actually opened.
+    authorization_pattern = re.compile(r"authorization", re.IGNORECASE)
+
+    authorization_deadline = time.monotonic() + TIMEOUT_MS / 1000
+
+    while time.monotonic() < authorization_deadline:
+
+        for frame in page.frames:
+            authorization = frame.get_by_text(authorization_pattern).filter(
+                visible=True
+            )
+
+            if authorization.count() > 0:
+                print("PASS: Authorization stage opened.")
+                return
+
+        page.wait_for_timeout(200)
+
+    raise BrowserWorkflowError(
+        "Forward was clicked, but Authorization stage " "was not confirmed."
+    )
+
     authorization = re.compile(r"authorization", re.I)
-    start_url = page.url
     deadline = time.monotonic() + TIMEOUT_MS / 1000
     while time.monotonic() < deadline:
-        if page.url != start_url:
-            break
-        if (
-            page.get_by_text(authorization).filter(visible=True).count()
-            or checkout.get_by_text(authorization).filter(visible=True).count()
+        if any(
+            frame.get_by_text(authorization).filter(visible=True).count()
+            for frame in page.frames
         ):
             break
         page.wait_for_timeout(100)
@@ -1687,7 +1840,7 @@ def _navigate_payment_forward(page):
         raise BrowserWorkflowError(
             "Forward navigation failed: Authorization stage was not confirmed."
         )
-    print("PASS: Forward navigation confirmed at Authorization stage.")
+    print("PASS: Authorization stage opened.")
 
 
 def verify_ez_enroll_payment(page, order, sensitive=None):
@@ -1695,10 +1848,7 @@ def verify_ez_enroll_payment(page, order, sensitive=None):
     if str(order.get("EZ Enroll", "")).strip().lower() != "yes":
         return
     try:
-        _complete_payment_fields(page, order, sensitive)
-        checkout = page.frame_locator("#checkoutContent")
-        _complete_billing_address(page, checkout, order)
-        _navigate_payment_forward(page)
+        _complete_payment_billing_and_forward(page, order, sensitive)
     finally:
         _clear_payment_values(sensitive)
 
@@ -1706,10 +1856,40 @@ def verify_ez_enroll_payment(page, order, sensitive=None):
 def complete_sample_payment(page, order, sensitive=None):
     """Validate payment fields and billing, then advance once to Authorization."""
     try:
-        _complete_payment_fields(page, order, sensitive)
-        checkout = page.frame_locator("#checkoutContent")
-        _complete_billing_address(page, checkout, order)
-        _navigate_payment_forward(page)
+        _complete_payment_billing_and_forward(page, order, sensitive)
+    finally:
+        _clear_payment_values(sensitive)
+
+
+def _complete_payment_billing_and_forward(page, order, sensitive):
+    """Complete payment disclosure, secure card entry, billing, and payment Forward."""
+    _complete_payment_fields(page, order, sensitive)
+    checkout = page.frame_locator("#checkoutContent")
+    _complete_billing_address(page, checkout, order)
+    _navigate_payment_forward(page)
+
+
+def complete_installation_and_payment(
+    page,
+    order,
+    sensitive=None,
+    *,
+    payment_required=True,
+):
+    """Run ProviderXX Step 3 continuously from installation selection to Authorization."""
+    ez_enroll = str(order.get("EZ Enroll", "")).strip().lower()
+    if ez_enroll not in ("yes", "no"):
+        raise SensitiveDataError("EZ Enroll: supported choices are Yes, No.")
+
+    try:
+        complete_installation(
+            page,
+            order,
+            advance=(ez_enroll == "no"),
+            sensitive=sensitive,
+        )
+        if payment_required:
+            _complete_payment_billing_and_forward(page, order, sensitive)
     finally:
         _clear_payment_values(sensitive)
 

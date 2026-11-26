@@ -1,4 +1,4 @@
-"""Atomically refresh orders.encrypted.json using the existing encryption key."""
+"""Atomically prepare orders.encrypted.json with non-sensitive order fields only."""
 import argparse
 import json
 import os
@@ -58,8 +58,8 @@ def main():
             "Encryption failed. Check JSON fields, existing key setup and the output path. "
             "The previous encrypted export was preserved."
         ) from None
-    print(f"Encrypted {count} customer records into orders.encrypted.json.")
-    print("The source still contains its original data. Apply your data-retention policy to it.")
+    print(f"Prepared {count} non-sensitive customer records in orders.encrypted.json.")
+    print("Runtime-only identity and payment fields are not copied to either JSON file.")
 
 
 if __name__ == "__main__":

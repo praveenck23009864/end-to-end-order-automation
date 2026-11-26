@@ -19,7 +19,7 @@ def read_orders(path):
 
 def prepare_order(customer_id, order, *, allow_plaintext=False):
     from new import validate_order
-    from sensitive_data import protect_order
+    from sensitive_data import SENSITIVE_ORDER_KEYS, SensitiveDataError
 
     if not isinstance(customer_id, str) or not CUSTOMER_ID_PATTERN.fullmatch(customer_id):
         raise SensitiveDataError("Customer ID: invalid record identifier.")
@@ -27,14 +27,17 @@ def prepare_order(customer_id, order, *, allow_plaintext=False):
         if not isinstance(order, dict):
             raise SensitiveDataError("Customer data: expected an object.")
         normalized = dict(order)
+        if any(key.strip().casefold() in SENSITIVE_ORDER_KEYS for key in normalized):
+            raise SensitiveDataError("Sensitive values must be collected at runtime, not from order JSON.")
         choice = normalized.get("EZ Enroll")
         if not isinstance(choice, str) or choice.strip().lower() not in {"yes", "no"}:
             raise SensitiveDataError("EZ Enroll: supported choices are Yes, No.")
         normalized["EZ Enroll"] = choice.strip().capitalize()
-        validate_order(normalized, allow_plaintext=allow_plaintext)
-        protected = protect_order(normalized, customer_id)
-        validate_order(protected)
-        return protected
+        normalized["Customer ID"] = customer_id
+        from sensitive_data import assert_non_sensitive_order
+        assert_non_sensitive_order(normalized, customer_id)
+        validate_order(normalized)
+        return normalized
     except ValueError as error:
         # Validators use fixed field names and never interpolate supplied values.
         raise SensitiveDataError(f"Customer {customer_id}: {error}") from None

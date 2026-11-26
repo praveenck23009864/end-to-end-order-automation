@@ -1,0 +1,1133 @@
+{
+  "schema_version": "1.0",
+  "project": "Provider XX / Allconnect Order Automation",
+  "description": "61 independent scenarios derived from the supplied simulator test-case reference.",
+  "usage": {
+    "scenario_selection_key": "test_case_id",
+    "each_scenario_is_independent": true,
+    "call_id_required_for_every_order": true,
+    "sensitive_data_policy": "SSN, DOB, card number, CVV, expiry, and payment credentials are excluded. Enter simulator values only through the existing masked secure-input workflow.",
+    "execution_note": "Scenario definitions and expected checkpoints only. This file does not prove the current runner supports or has executed all 61 cases."
+  },
+  "scenarios": [
+    {
+      "scenario_id": "SCN-001",
+      "test_case_id": "A1",
+      "category": "Address and availability",
+      "description": "Address not found; suggestions should be displayed",
+      "test_data": {
+        "call_id": "9000000001",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99901"
+      },
+      "expected_behavior": "Address not found; suggestions should be displayed",
+      "checkpoint": "Valid Address",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Review suggestions and confirm the correct address before proceeding."
+    },
+    {
+      "scenario_id": "SCN-002",
+      "test_case_id": "A2",
+      "category": "Address and availability",
+      "description": "Apartment building requires a unit number",
+      "test_data": {
+        "call_id": "9000000002",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99902"
+      },
+      "expected_behavior": "Apartment building requires a unit number",
+      "checkpoint": "Basic Information → Forward",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify missing-unit validation blocks progression until supplied."
+    },
+    {
+      "scenario_id": "SCN-003",
+      "test_case_id": "A3",
+      "category": "Address and availability",
+      "description": "ProviderXX does not serve the address; ProviderVZ only",
+      "test_data": {
+        "call_id": "9000000003",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99903"
+      },
+      "expected_behavior": "ProviderXX does not serve the address; ProviderVZ only",
+      "checkpoint": "Recommendations / Internet products",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify ProviderXX is unavailable and the alternative provider is shown."
+    },
+    {
+      "scenario_id": "SCN-004",
+      "test_case_id": "A4",
+      "category": "Address and availability",
+      "description": "Only 300 Mbps and 500 Mbps plans are available",
+      "test_data": {
+        "call_id": "9000000004",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99904"
+      },
+      "expected_behavior": "Only 300 Mbps and 500 Mbps plans are available",
+      "checkpoint": "Internet products",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify no unsupported speed tiers are offered."
+    },
+    {
+      "scenario_id": "SCN-005",
+      "test_case_id": "A5",
+      "category": "Address and availability",
+      "description": "P.O. Box address is not allowed",
+      "test_data": {
+        "call_id": "9000000005",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99905"
+      },
+      "expected_behavior": "P.O. Box address is not allowed",
+      "checkpoint": "Basic Information",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Use an address beginning with 'PO Box'; verify validation blocks it."
+    },
+    {
+      "scenario_id": "SCN-006",
+      "test_case_id": "P1",
+      "category": "Price and product",
+      "description": "Checkout price is $5.00 higher than plan-list price",
+      "test_data": {
+        "call_id": "9000000006",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99910"
+      },
+      "expected_behavior": "Checkout price is $5.00 higher than plan-list price",
+      "checkpoint": "Checkout review / Cart / Summary",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Compare prices and flag the $5 discrepancy."
+    },
+    {
+      "scenario_id": "SCN-007",
+      "test_case_id": "P2",
+      "category": "Price and product",
+      "description": "No 1-YEAR PRICING plans are available because the promotion ended",
+      "test_data": {
+        "call_id": "9000000007",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99911"
+      },
+      "expected_behavior": "No 1-YEAR PRICING plans are available because the promotion ended",
+      "checkpoint": "Internet products",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify 1-year pricing plans are absent."
+    },
+    {
+      "scenario_id": "SCN-008",
+      "test_case_id": "P3",
+      "category": "Price and product",
+      "description": "Phone service is not available",
+      "test_data": {
+        "call_id": "9000000008",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99912"
+      },
+      "expected_behavior": "Phone service is not available",
+      "checkpoint": "Checkout review",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify phone is unavailable."
+    },
+    {
+      "scenario_id": "SCN-009",
+      "test_case_id": "P4",
+      "category": "Price and product",
+      "description": "TV service is not available",
+      "test_data": {
+        "call_id": "9000000009",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99913"
+      },
+      "expected_behavior": "TV service is not available",
+      "checkpoint": "Checkout review",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify TV is unavailable."
+    },
+    {
+      "scenario_id": "SCN-010",
+      "test_case_id": "P5",
+      "category": "Price and product",
+      "description": "Leased gateway is out of stock",
+      "test_data": {
+        "call_id": "9000000010",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99914"
+      },
+      "expected_behavior": "Leased gateway is out of stock",
+      "checkpoint": "Product Customization",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify out-of-stock handling prevents selecting the unavailable gateway."
+    },
+    {
+      "scenario_id": "SCN-011",
+      "test_case_id": "P6",
+      "category": "Price and product",
+      "description": "Checkout price is $5.00 lower than plan-list price",
+      "test_data": {
+        "call_id": "9000000011",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99915"
+      },
+      "expected_behavior": "Checkout price is $5.00 lower than plan-list price",
+      "checkpoint": "Checkout review / Cart / Summary",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Compare prices and flag the $5 discrepancy."
+    },
+    {
+      "scenario_id": "SCN-012",
+      "test_case_id": "P7",
+      "category": "Price and product",
+      "description": "Selected plan disappears after it is added",
+      "test_data": {
+        "call_id": "9000000012",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99916"
+      },
+      "expected_behavior": "Selected plan disappears after it is added",
+      "checkpoint": "Checkout review",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Detect the missing plan; do not silently substitute another plan."
+    },
+    {
+      "scenario_id": "SCN-013",
+      "test_case_id": "P8",
+      "category": "Price and product",
+      "description": "Next lower speed is preselected in checkout",
+      "test_data": {
+        "call_id": "9000000013",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99917"
+      },
+      "expected_behavior": "Next lower speed is preselected in checkout",
+      "checkpoint": "Checkout review",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Compare checkout speed with originally selected speed and flag mismatch."
+    },
+    {
+      "scenario_id": "SCN-014",
+      "test_case_id": "P9",
+      "category": "Price and product",
+      "description": "Unexpected \"Broadband Service Fee\" of $10.00/month appears",
+      "test_data": {
+        "call_id": "9000000014",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99918"
+      },
+      "expected_behavior": "Unexpected \"Broadband Service Fee\" of $10.00/month appears",
+      "checkpoint": "Checkout review / Cart / Summary",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Surface the recurring fee and validate total."
+    },
+    {
+      "scenario_id": "SCN-015",
+      "test_case_id": "P10",
+      "category": "Price and product",
+      "description": "Professional installation fee is $150.00 instead of $100.00",
+      "test_data": {
+        "call_id": "9000000015",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99919"
+      },
+      "expected_behavior": "Professional installation fee is $150.00 instead of $100.00",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Detect the installation-fee mismatch."
+    },
+    {
+      "scenario_id": "SCN-016",
+      "test_case_id": "P11",
+      "category": "Price and product",
+      "description": "Two \"1 Gig (1-YEAR PRICING)\" plans appear at $60.00 and $65.00",
+      "test_data": {
+        "call_id": "9000000016",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99930"
+      },
+      "expected_behavior": "Two \"1 Gig (1-YEAR PRICING)\" plans appear at $60.00 and $65.00",
+      "checkpoint": "Internet products",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Distinguish duplicate plan names with different prices."
+    },
+    {
+      "scenario_id": "SCN-017",
+      "test_case_id": "P12",
+      "category": "Price and product",
+      "description": "Price depends on autopay; without autopay it is $5.00 more",
+      "test_data": {
+        "call_id": "9000000017",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99931"
+      },
+      "expected_behavior": "Price depends on autopay; without autopay it is $5.00 more",
+      "checkpoint": "Internet products / Checkout",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify autopay preference determines displayed price."
+    },
+    {
+      "scenario_id": "SCN-018",
+      "test_case_id": "P13",
+      "category": "Price and product",
+      "description": "\"1 Gig\" plans are renamed \"Gigabit Connection\"",
+      "test_data": {
+        "call_id": "9000000018",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99932"
+      },
+      "expected_behavior": "\"1 Gig\" plans are renamed \"Gigabit Connection\"",
+      "checkpoint": "Internet products",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify plan identification works with renamed label."
+    },
+    {
+      "scenario_id": "SCN-019",
+      "test_case_id": "P14",
+      "category": "Price and product",
+      "description": "ProviderXX rows display \"Call for pricing\"",
+      "test_data": {
+        "call_id": "9000000019",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99933"
+      },
+      "expected_behavior": "ProviderXX rows display \"Call for pricing\"",
+      "checkpoint": "Internet products",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Do not treat unavailable prices as numeric or selectable."
+    },
+    {
+      "scenario_id": "SCN-020",
+      "test_case_id": "P15",
+      "category": "Price and product",
+      "description": "Monthly Total is $5.00 more than the sum of line items",
+      "test_data": {
+        "call_id": "9000000020",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99934"
+      },
+      "expected_behavior": "Monthly Total is $5.00 more than the sum of line items",
+      "checkpoint": "Cart / Checkout",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Reconcile line items against Monthly Total and flag discrepancy."
+    },
+    {
+      "scenario_id": "SCN-021",
+      "test_case_id": "I1",
+      "category": "Installation",
+      "description": "Professional installation is required; self-install unavailable",
+      "test_data": {
+        "call_id": "9000000021",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99920"
+      },
+      "expected_behavior": "Professional installation is required; self-install unavailable",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify professional installation is required."
+    },
+    {
+      "scenario_id": "SCN-022",
+      "test_case_id": "I2",
+      "category": "Installation",
+      "description": "First available installation date is 21 days away",
+      "test_data": {
+        "call_id": "9000000022",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99921"
+      },
+      "expected_behavior": "First available installation date is 21 days away",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify earliest date and selected date."
+    },
+    {
+      "scenario_id": "SCN-023",
+      "test_case_id": "I3",
+      "category": "Installation",
+      "description": "Self-install is the only available option",
+      "test_data": {
+        "call_id": "9000000023",
+        "trigger_field": "service_zip_code",
+        "trigger_value": "99922"
+      },
+      "expected_behavior": "Self-install is the only available option",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify professional installation is unavailable."
+    },
+    {
+      "scenario_id": "SCN-024",
+      "test_case_id": "C1",
+      "category": "Customer and account",
+      "description": "Customer already has ProviderXX service at this address",
+      "test_data": {
+        "call_id": "9000000024",
+        "trigger_field": "last_name",
+        "trigger_value": "Existing"
+      },
+      "expected_behavior": "Customer already has ProviderXX service at this address",
+      "checkpoint": "Account Holder Qualification",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Prevent unintended duplicate new-service order."
+    },
+    {
+      "scenario_id": "SCN-025",
+      "test_case_id": "C2",
+      "category": "Customer and account",
+      "description": "Customer has a past-due balance of $245.67",
+      "test_data": {
+        "call_id": "9000000025",
+        "trigger_field": "last_name",
+        "trigger_value": "Pastdue"
+      },
+      "expected_behavior": "Customer has a past-due balance of $245.67",
+      "checkpoint": "Account Holder Qualification",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify balance and simulator qualification handling."
+    },
+    {
+      "scenario_id": "SCN-026",
+      "test_case_id": "C3",
+      "category": "Customer and account",
+      "description": "Customer has ProviderXX service at another address",
+      "test_data": {
+        "call_id": "9000000026",
+        "trigger_field": "last_name",
+        "trigger_value": "Mover"
+      },
+      "expected_behavior": "Customer has ProviderXX service at another address",
+      "checkpoint": "Qualification (New → Forward)",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify mover handling and correct move/transfer path."
+    },
+    {
+      "scenario_id": "SCN-027",
+      "test_case_id": "C4",
+      "category": "Customer and account",
+      "description": "Customer name does not match the account",
+      "test_data": {
+        "call_id": "9000000027",
+        "trigger_field": "last_name",
+        "trigger_value": "Mismatch"
+      },
+      "expected_behavior": "Customer name does not match the account",
+      "checkpoint": "Account Holder Qualification",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Surface mismatch; do not bypass qualification."
+    },
+    {
+      "scenario_id": "SCN-028",
+      "test_case_id": "C5",
+      "category": "Customer and account",
+      "description": "Caller is not the account holder",
+      "test_data": {
+        "call_id": "9000000028",
+        "trigger_field": "last_name",
+        "trigger_value": "Holder"
+      },
+      "expected_behavior": "Caller is not the account holder",
+      "checkpoint": "Account Holder Qualification",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify account-holder authorization is required."
+    },
+    {
+      "scenario_id": "SCN-029",
+      "test_case_id": "K1",
+      "category": "Credit check and payment",
+      "description": "Approved credit check",
+      "test_data": {
+        "call_id": "9000000029",
+        "trigger_field": "SSN",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Approved credit check",
+      "checkpoint": "Credit check",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use approved SSN case via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-030",
+      "test_case_id": "K2",
+      "category": "Credit check and payment",
+      "description": "Credit check declined",
+      "test_data": {
+        "call_id": "9000000030",
+        "trigger_field": "SSN",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Credit check declined",
+      "checkpoint": "Credit check",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use declined SSN case via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-031",
+      "test_case_id": "K3",
+      "category": "Credit check and payment",
+      "description": "Credit check approved with a $100.00 deposit",
+      "test_data": {
+        "call_id": "9000000031",
+        "trigger_field": "SSN",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Credit check approved with a $100.00 deposit",
+      "checkpoint": "Credit check",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use $100 deposit SSN case via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-032",
+      "test_case_id": "K4",
+      "category": "Credit check and payment",
+      "description": "Identity cannot be verified",
+      "test_data": {
+        "call_id": "9000000032",
+        "trigger_field": "SSN",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Identity cannot be verified",
+      "checkpoint": "Credit check",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use identity-verification failure SSN case via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-033",
+      "test_case_id": "K5",
+      "category": "Credit check and payment",
+      "description": "Credit check service is down on first try",
+      "test_data": {
+        "call_id": "9000000033",
+        "trigger_field": "SSN",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Credit check service is down on first try",
+      "checkpoint": "Credit check",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use first-attempt service-down SSN case via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-034",
+      "test_case_id": "K6",
+      "category": "Credit check and payment",
+      "description": "Customer is under 18",
+      "test_data": {
+        "call_id": "9000000034",
+        "trigger_field": "Date of birth",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Customer is under 18",
+      "checkpoint": "Credit check",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Enter under-18 DOB via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-035",
+      "test_case_id": "K7",
+      "category": "Credit check and payment",
+      "description": "Card is accepted",
+      "test_data": {
+        "call_id": "9000000035",
+        "trigger_field": "Card number",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Card is accepted",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use accepted card via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-036",
+      "test_case_id": "K8",
+      "category": "Credit check and payment",
+      "description": "Card is declined",
+      "test_data": {
+        "call_id": "9000000036",
+        "trigger_field": "Card number",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Card is declined",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use declined card via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-037",
+      "test_case_id": "K9",
+      "category": "Credit check and payment",
+      "description": "Card is expired",
+      "test_data": {
+        "call_id": "9000000037",
+        "trigger_field": "Card number / expiry",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Card is expired",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use expired-card case via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-038",
+      "test_case_id": "K10",
+      "category": "Credit check and payment",
+      "description": "Card number fails number check (mistyped)",
+      "test_data": {
+        "call_id": "9000000038",
+        "trigger_field": "Card number",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Card number fails number check (mistyped)",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use mistyped-number case via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-039",
+      "test_case_id": "K11",
+      "category": "Credit check and payment",
+      "description": "Wrong security code; three consecutive failures lead to card lock (K17)",
+      "test_data": {
+        "call_id": "9000000039",
+        "trigger_field": "Card number / security code",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Wrong security code; three consecutive failures lead to card lock (K17)",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use wrong-security-code case via masked secure input; do not store security code. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-040",
+      "test_case_id": "K12",
+      "category": "Credit check and payment",
+      "description": "Expiration date is in the past",
+      "test_data": {
+        "call_id": "9000000040",
+        "trigger_field": "Card expiry",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Expiration date is in the past",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Enter past expiry via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-041",
+      "test_case_id": "K13",
+      "category": "Credit check and payment",
+      "description": "Billing ZIP does not match the card",
+      "test_data": {
+        "call_id": "9000000041",
+        "trigger_field": "Card number / billing ZIP",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Billing ZIP does not match the card",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use billing-ZIP mismatch case via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-042",
+      "test_case_id": "K14",
+      "category": "Credit check and payment",
+      "description": "Billing street does not match the card",
+      "test_data": {
+        "call_id": "9000000042",
+        "trigger_field": "Card number / billing street",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Billing street does not match the card",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use billing-street mismatch case via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-043",
+      "test_case_id": "K15",
+      "category": "Credit check and payment",
+      "description": "American Express is not accepted",
+      "test_data": {
+        "call_id": "9000000043",
+        "trigger_field": "Card type / number",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "American Express is not accepted",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use Amex case via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-044",
+      "test_case_id": "K16",
+      "category": "Credit check and payment",
+      "description": "Cardholder name is empty; required-field validation should appear",
+      "test_data": {
+        "call_id": "9000000044",
+        "trigger_field": "Cardholder name",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Cardholder name is empty; required-field validation should appear",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Leave cardholder name blank; do not save payment data. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-045",
+      "test_case_id": "K17",
+      "category": "Credit check and payment",
+      "description": "Three failed tries cause card payment to be locked",
+      "test_data": {
+        "call_id": "9000000045",
+        "trigger_field": "Payment attempts",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Three failed tries cause card payment to be locked",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Perform simulator-defined three failed attempts; verify lockout. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-046",
+      "test_case_id": "K18",
+      "category": "Credit check and payment",
+      "description": "Payment service errors on first try",
+      "test_data": {
+        "call_id": "9000000046",
+        "trigger_field": "Card number",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Payment service errors on first try",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use first-attempt payment-error case via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-047",
+      "test_case_id": "K19",
+      "category": "Credit check and payment",
+      "description": "Payment service is down on every try",
+      "test_data": {
+        "call_id": "9000000047",
+        "trigger_field": "Card number",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Payment service is down on every try",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use persistent service-down case; verify safe stop. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-048",
+      "test_case_id": "K20",
+      "category": "Credit check and payment",
+      "description": "Payment hangs for 60 seconds, then succeeds",
+      "test_data": {
+        "call_id": "9000000048",
+        "trigger_field": "Card number",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Payment hangs for 60 seconds, then succeeds",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use delayed-success case; verify final result. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-049",
+      "test_case_id": "K21",
+      "category": "Credit check and payment",
+      "description": "Insufficient funds for initial payment",
+      "test_data": {
+        "call_id": "9000000049",
+        "trigger_field": "Card number",
+        "trigger_value": null,
+        "secure_input_instruction": "Choose the matching simulator trigger only in the existing masked secure-input workflow; do not store the sensitive value."
+      },
+      "expected_behavior": "Insufficient funds for initial payment",
+      "checkpoint": "Installation & Payment",
+      "execution": {
+        "mode": "manual_secure_input_required",
+        "secure_input_required": true
+      },
+      "notes": "Use insufficient-funds case via masked secure input. Sensitive SSN, DOB, card number, CVV, and expiry values are intentionally excluded from this JSON."
+    },
+    {
+      "scenario_id": "SCN-050",
+      "test_case_id": "T1",
+      "category": "Portal and technical problems",
+      "description": "Checkout frame loads after 25 seconds",
+      "test_data": {
+        "call_id": "9000000050",
+        "trigger_field": "first_name",
+        "trigger_value": "Slowframe"
+      },
+      "expected_behavior": "Checkout frame loads after 25 seconds",
+      "checkpoint": "Checkout",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify explicit wait handling."
+    },
+    {
+      "scenario_id": "SCN-051",
+      "test_case_id": "T2",
+      "category": "Portal and technical problems",
+      "description": "Checkout frame fails on first load; retry succeeds",
+      "test_data": {
+        "call_id": "9000000051",
+        "trigger_field": "first_name",
+        "trigger_value": "Frameerror"
+      },
+      "expected_behavior": "Checkout frame fails on first load; retry succeeds",
+      "checkpoint": "Checkout",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify controlled retry does not duplicate order actions."
+    },
+    {
+      "scenario_id": "SCN-052",
+      "test_case_id": "T3",
+      "category": "Portal and technical problems",
+      "description": "Session expires once; OK reloads page and order resumes",
+      "test_data": {
+        "call_id": "9000000052",
+        "trigger_field": "first_name",
+        "trigger_value": "Expired"
+      },
+      "expected_behavior": "Session expires once; OK reloads page and order resumes",
+      "checkpoint": "Qualification → Forward",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify safe session recovery without duplicating submitted actions."
+    },
+    {
+      "scenario_id": "SCN-053",
+      "test_case_id": "T4",
+      "category": "Portal and technical problems",
+      "description": "Unexpected promotion pop-up appears",
+      "test_data": {
+        "call_id": "9000000053",
+        "trigger_field": "first_name",
+        "trigger_value": "Popup"
+      },
+      "expected_behavior": "Unexpected promotion pop-up appears",
+      "checkpoint": "Recommendations",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify pop-up handling does not select unintended products."
+    },
+    {
+      "scenario_id": "SCN-054",
+      "test_case_id": "T5",
+      "category": "Portal and technical problems",
+      "description": "Alternate checkout layout with changed field IDs/labels and \"Continue >\"",
+      "test_data": {
+        "call_id": "9000000054",
+        "trigger_field": "first_name",
+        "trigger_value": "Layoutb"
+      },
+      "expected_behavior": "Alternate checkout layout with changed field IDs/labels and \"Continue >\"",
+      "checkpoint": "Checkout (all steps)",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify alternate layout selectors and labels."
+    },
+    {
+      "scenario_id": "SCN-055",
+      "test_case_id": "T6",
+      "category": "Portal and technical problems",
+      "description": "Extra mandatory statement with its own Read checkbox",
+      "test_data": {
+        "call_id": "9000000055",
+        "trigger_field": "first_name",
+        "trigger_value": "Script"
+      },
+      "expected_behavior": "Extra mandatory statement with its own Read checkbox",
+      "checkpoint": "Product Customization",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify extra statement is acknowledged before continuing."
+    },
+    {
+      "scenario_id": "SCN-056",
+      "test_case_id": "T7",
+      "category": "Portal and technical problems",
+      "description": "Portal is under maintenance; order cannot continue",
+      "test_data": {
+        "call_id": "9000000056",
+        "trigger_field": "first_name",
+        "trigger_value": "Maintenance"
+      },
+      "expected_behavior": "Portal is under maintenance; order cannot continue",
+      "checkpoint": "Basic Information → Forward",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Stop cleanly and report maintenance."
+    },
+    {
+      "scenario_id": "SCN-057",
+      "test_case_id": "S1",
+      "category": "After Submit Order",
+      "description": "Place Order action fails",
+      "test_data": {
+        "call_id": "9000000057",
+        "trigger_field": "first_name",
+        "trigger_value": "Placefail"
+      },
+      "expected_behavior": "Place Order action fails",
+      "checkpoint": "Order Summary → Place Order",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Report failure; do not mark submission successful."
+    },
+    {
+      "scenario_id": "SCN-058",
+      "test_case_id": "S2",
+      "category": "After Submit Order",
+      "description": "Provider order ID is missing on Close Call",
+      "test_data": {
+        "call_id": "9000000058",
+        "trigger_field": "first_name",
+        "trigger_value": "Noconfirm"
+      },
+      "expected_behavior": "Provider order ID is missing on Close Call",
+      "checkpoint": "Close Call",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Treat as ambiguous; verify simulator status before any retry."
+    },
+    {
+      "scenario_id": "SCN-059",
+      "test_case_id": "S3",
+      "category": "After Submit Order",
+      "description": "Submit Order hangs for 90 seconds, then completes",
+      "test_data": {
+        "call_id": "9000000059",
+        "trigger_field": "first_name",
+        "trigger_value": "Slowsubmit"
+      },
+      "expected_behavior": "Submit Order hangs for 90 seconds, then completes",
+      "checkpoint": "Authorization",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Confirm final simulator outcome before retry."
+    },
+    {
+      "scenario_id": "SCN-060",
+      "test_case_id": "S4",
+      "category": "After Submit Order",
+      "description": "Second Submit Order within 10 seconds is reported",
+      "test_data": {
+        "call_id": "9000000060",
+        "trigger_field": "first_name",
+        "trigger_value": "Doubleclick"
+      },
+      "expected_behavior": "Second Submit Order within 10 seconds is reported",
+      "checkpoint": "Authorization",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Verify duplicate-submit protection."
+    },
+    {
+      "scenario_id": "SCN-061",
+      "test_case_id": "S5",
+      "category": "After Submit Order",
+      "description": "Close Call names the next lower speed",
+      "test_data": {
+        "call_id": "9000000061",
+        "trigger_field": "first_name",
+        "trigger_value": "Different"
+      },
+      "expected_behavior": "Close Call names the next lower speed",
+      "checkpoint": "Close Call",
+      "execution": {
+        "mode": "automated",
+        "secure_input_required": false
+      },
+      "notes": "Flag plan mismatch; do not report a successful match."
+    }
+  ]
+}

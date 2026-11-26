@@ -20,3 +20,4 @@ orders*.json
 # Logs and sensitive debugging output
 *.log
 debug.log
+temporary_input.txt

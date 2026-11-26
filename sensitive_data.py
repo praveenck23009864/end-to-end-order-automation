@@ -28,6 +28,12 @@ CARD_FIELDS = {
     "cardholder", "cardholdername", "expiry", "expirydate", "expirationdate",
     "cardexpiry", "expirymonth", "expiryyear", "expmonth", "expyear",
 }
+SENSITIVE_ORDER_KEYS = {
+    "ssn", "dob", "sensitive data", "card type", "card_type", "card number",
+    "card_number", "cardholder name", "cardholder_name", "cvv code", "cvv",
+    "cvc", "expiration month", "expiration_month", "expiration year",
+    "expiration_year", "cardtype", "cvvcode", "expirymonth", "expiryyear",
+}
 
 SAFE_STAGES = {
     "opening simulator", "validating saved order",
@@ -38,6 +44,13 @@ SAFE_STAGES = {
     "selecting checkout products", "setting Broadband Labels",
     "selecting equipment", "qualifying Account Holder",
     "credit check and installation", "installation Forward clicked",
+    "Step 3 installation and payment",
+    "Authorization and Submit Order", "order submitted",
+    "submission outcome ambiguous",
+    "verifying EZ Enroll payment review",
+    "EZ Enroll payment review completed",
+    "verifying sample payment fields",
+    "payment fields verified; stopped for manual review",
     "sample payment and Forward", "payment Forward clicked",
     "manual recovery", "legacy stage omitted",
 }
@@ -102,6 +115,34 @@ def assert_protected_order(order, customer_id=None):
         or not 80 <= len(envelope["token"]) <= 8192
     ):
         raise SensitiveDataError("Unsupported encrypted customer payload.")
+
+
+def assert_non_sensitive_order(order, customer_id=None):
+    """Validate an order allowed in ordinary JSON/SQLite/API responses."""
+    if not isinstance(order, dict):
+        raise SensitiveDataError("Customer data must be an object.")
+    if not isinstance(order.get("Customer ID"), str) or not CUSTOMER_ID_PATTERN.fullmatch(order["Customer ID"]):
+        raise SensitiveDataError("A customer needs a valid Customer ID.")
+    if customer_id is not None and order["Customer ID"] != str(customer_id):
+        raise SensitiveDataError("Customer ID does not match its record.")
+
+    def scan(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                normalized = str(key).strip().casefold()
+                compact = re.sub(r"[^a-z0-9]", "", normalized)
+                if normalized in SENSITIVE_ORDER_KEYS or compact in CARD_FIELDS or compact in {
+                    "cardtype", "cvvcode",
+                    "expirymonth", "expirationmonth", "expiryyear", "expirationyear",
+                }:
+                    raise SensitiveDataError("Sensitive fields are runtime-only and cannot be stored.")
+                scan(item)
+        elif isinstance(value, list):
+            for item in value:
+                scan(item)
+
+    scan(order)
+    return order
 
 
 def _private_file():

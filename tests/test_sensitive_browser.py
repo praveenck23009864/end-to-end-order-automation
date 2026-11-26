@@ -34,13 +34,13 @@ def test_customer5_sqlite_billing_data_reaches_payment_playwright_function(
     page = PageStub()
     monkeypatch.setattr(
         new, "_complete_payment_fields",
-        lambda page, order, sensitive: received.update(order),
+        lambda _page, order, _sensitive: received.update(order),
     )
     monkeypatch.setattr(
         new, "_complete_billing_address",
-        lambda page, checkout, order: received.update(order),
+        lambda _page, _checkout, order: received.update(order),
     )
-    monkeypatch.setattr(new, "_navigate_payment_forward", lambda page: None)
+    monkeypatch.setattr(new, "_navigate_payment_forward", lambda _page: None)
 
     new.verify_ez_enroll_payment(page, selected_order, {})
 
@@ -108,15 +108,36 @@ def test_payment_forward_uses_page_button_when_outside_checkout_iframe():
             browser.close()
 
 
+def test_payment_forward_finds_nested_child_frame_button():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content('<iframe id="checkoutContent"></iframe>')
+            page.frames[1].set_content('<iframe id="child"></iframe>')
+            child = page.frames[2]
+            child.set_content('''
+                <button onclick="window.clicks++; document.querySelector('#authorization').hidden=false">
+                    Forward &gt;
+                </button>
+                <h2 id="authorization" hidden>Authorization:</h2>
+                <script>window.clicks=0;</script>
+            ''')
+            new._navigate_payment_forward(page)
+            assert child.locator("#authorization").is_visible()
+            assert child.evaluate("window.clicks") == 1
+        finally:
+            browser.close()
+
+
 def test_blur_precedes_input_and_dates_keep_native_format(monkeypatch):
     monkeypatch.delenv("DEBUG", raising=False)
     monkeypatch.delenv("PWDEBUG", raising=False)
     with sync_playwright() as playwright:
         executable = os.environ.get("TEST_CHROMIUM_EXECUTABLE")
-        options = {"headless": True}
-        if executable:
-            options["executable_path"] = executable
-        browser = playwright.chromium.launch(**options)
+        browser = playwright.chromium.launch(
+            headless=True, executable_path=executable
+        )
         try:
             page = browser.new_page()
             page.set_content('''
@@ -157,11 +178,10 @@ def test_sample_payment_billing_navigation(monkeypatch, layout, disclosure_root,
     monkeypatch.delenv("DEBUG", raising=False)
     monkeypatch.delenv("PWDEBUG", raising=False)
     with sync_playwright() as playwright:
-        options = {"headless": True}
         executable = os.environ.get("TEST_CHROMIUM_EXECUTABLE")
-        if executable:
-            options["executable_path"] = executable
-        browser = playwright.chromium.launch(**options)
+        browser = playwright.chromium.launch(
+            headless=True, executable_path=executable
+        )
         try:
             page = browser.new_page()
             page.route("**/*", lambda route: route.fulfill(body='<iframe id="checkoutContent"></iframe>'))
@@ -313,6 +333,7 @@ def test_sample_payment_billing_navigation(monkeypatch, layout, disclosure_root,
             new.complete_sample_payment(page, order, sensitive_values)
             expected_clicks = 1
             assert frame.evaluate("window.clicks") == expected_clicks
+            assert frame.evaluate("window.validAtForward") is True
             assert frame.evaluate("window.sequence") == ["read", "add", "edit", "forward"]
             assert frame.locator("#number").input_value() == "4242424242424242"
             assert frame.locator("#holder").input_value() == "SYNTHETIC TEST"
@@ -344,11 +365,10 @@ def test_ez_enroll_installation_and_payment_stop_before_final_forward(monkeypatc
     monkeypatch.delenv("DEBUG", raising=False)
     monkeypatch.delenv("PWDEBUG", raising=False)
     with sync_playwright() as playwright:
-        options = {"headless": True}
         executable = os.environ.get("TEST_CHROMIUM_EXECUTABLE")
-        if executable:
-            options["executable_path"] = executable
-        browser = playwright.chromium.launch(**options)
+        browser = playwright.chromium.launch(
+            headless=True, executable_path=executable
+        )
         try:
             page = browser.new_page()
             page.route("**/*", lambda route: route.fulfill(body='<iframe id="checkoutContent"></iframe>'))
@@ -490,10 +510,10 @@ import pytest
 def test_payment_diagnostics_precede_failure_and_inspect_nested_frames(capsys):
     from tools.inspect_payment_fields import PaymentDiagnostics, inspect_payment_fields
     with sync_playwright() as playwright:
-        options = {"headless": True}
-        if os.environ.get("TEST_CHROMIUM_EXECUTABLE"):
-            options["executable_path"] = os.environ["TEST_CHROMIUM_EXECUTABLE"]
-        browser = playwright.chromium.launch(**options)
+        executable = os.environ.get("TEST_CHROMIUM_EXECUTABLE")
+        browser = playwright.chromium.launch(
+            headless=True, executable_path=executable
+        )
         try:
             page = browser.new_page()
             page.set_content('<iframe id="checkoutContent"></iframe>')
@@ -530,12 +550,12 @@ def test_payment_diagnostics_precede_failure_and_inspect_nested_frames(capsys):
 
 @pytest.mark.parametrize("ez", ["Yes", "No"])
 @pytest.mark.parametrize("installation", ["STANDARD_SHIPPING", "PRO_INSTALL"])
-def test_installation_credit_branches(monkeypatch, ez, installation):
+def test_installation_credit_branches(ez, installation):
     with sync_playwright() as playwright:
-        options = {"headless": True}
-        if os.environ.get("TEST_CHROMIUM_EXECUTABLE"):
-            options["executable_path"] = os.environ["TEST_CHROMIUM_EXECUTABLE"]
-        browser = playwright.chromium.launch(**options)
+        executable = os.environ.get("TEST_CHROMIUM_EXECUTABLE")
+        browser = playwright.chromium.launch(
+            headless=True, executable_path=executable
+        )
         try:
             page = browser.new_page()
             page.set_content('<iframe id="checkoutContent"></iframe>')
@@ -600,8 +620,10 @@ def test_installation_credit_branches(monkeypatch, ez, installation):
                 "card_number": "", "cardholder_name": "", "cvv": "",
                 "expiration_month": "", "expiration_year": "",
             }
-            advance = not (ez == "Yes" and installation == "STANDARD_SHIPPING")
-            new.complete_installation(page, order, advance=advance, sensitive=sensitive_values)
+            advance = ez == "No"
+            new.complete_installation_and_payment(
+                page, order, sensitive_values, payment_required=False,
+            )
             assert page.url == initial_url
             assert frame.evaluate('window.creditClicks') == (0 if ez == "Yes" else 1)
             assert frame.evaluate('window.confirms') == 1
@@ -625,11 +647,10 @@ def test_installation_credit_branches(monkeypatch, ez, installation):
 def test_pro_install_confirmation_validation_stops_before_forward(monkeypatch):
     monkeypatch.setattr(new, "TIMEOUT_MS", 500)
     with sync_playwright() as playwright:
-        options = {"headless": True}
         executable = os.environ.get("TEST_CHROMIUM_EXECUTABLE")
-        if executable:
-            options["executable_path"] = executable
-        browser = playwright.chromium.launch(**options)
+        browser = playwright.chromium.launch(
+            headless=True, executable_path=executable
+        )
         try:
             page = browser.new_page()
             page.set_content('<iframe id="checkoutContent"></iframe>')
@@ -669,6 +690,214 @@ def test_pro_install_confirmation_validation_stops_before_forward(monkeypatch):
             browser.close()
 
 
+@pytest.mark.parametrize("installation", ["PRO_INSTALL", "STANDARD_SHIPPING"])
+@pytest.mark.parametrize("billing", ["Yes", "No"])
+@pytest.mark.parametrize("ez_enroll", ["Yes", "No"])
+def test_installation_and_payment_orchestrator_is_one_ordered_step(
+    monkeypatch, installation, billing, ez_enroll,
+):
+    sequence = []
+    order = {
+        "Installation Type": installation,
+        "Install Date": "2027-02-12",
+        "Install Time": "Afternoon",
+        "EZ Enroll": ez_enroll,
+        "Credit Card Billing Address Same as Service": billing,
+    }
+    if billing == "No":
+        order.update({
+            "Billing Address": "8 Test Street", "Billing City": "Testville",
+            "Billing State": "Texas", "Billing ZIP": "12345",
+        })
+
+    monkeypatch.setattr(
+        new, "complete_installation",
+        lambda page, given_order, *, advance, sensitive: sequence.append(
+            ("installation", given_order["Installation Type"], advance)
+        ),
+    )
+    monkeypatch.setattr(
+        new, "_complete_payment_billing_and_forward",
+        lambda page, given_order, sensitive: sequence.append(
+            ("payment+billing+forward", given_order["Credit Card Billing Address Same as Service"])
+        ),
+    )
+    sensitive = {
+        "card_number": "synthetic", "cvv": "synthetic",
+        "expiration_month": "synthetic", "expiration_year": "synthetic",
+    }
+
+    new.complete_installation_and_payment(
+        object(), order, sensitive, payment_required=True,
+    )
+
+    assert sequence == [
+        ("installation", installation, ez_enroll == "No"),
+        ("payment+billing+forward", billing),
+    ]
+    assert sensitive["card_number"] == ""
+
+
+def test_installation_failure_prevents_payment_and_payment_forward(monkeypatch):
+    payment_calls = []
+
+    def fail_installation(*args, **kwargs):
+        raise new.SensitiveDataError("Installation confirmation failed safely.")
+
+    monkeypatch.setattr(new, "complete_installation", fail_installation)
+    monkeypatch.setattr(
+        new, "_complete_payment_billing_and_forward",
+        lambda *args, **kwargs: payment_calls.append("payment forward"),
+    )
+    with pytest.raises(new.SensitiveDataError, match="Installation confirmation failed"):
+        new.complete_installation_and_payment(
+            object(), {"EZ Enroll": "No"}, {}, payment_required=True,
+        )
+    assert payment_calls == []
+
+
+def test_authorization_requires_matching_statement_and_confirms_submission(monkeypatch):
+    import run_from_api
+
+    monkeypatch.setattr(run_from_api.automation, "validate_order", lambda order: None)
+    monkeypatch.setattr(run_from_api.automation, "URL", "about:blank")
+    statement = (
+        "AVERY BROOKS, do you authorize ProviderXX to process this order for the "
+        "products and prices I have reviewed with you today, and agree to the "
+        "ProviderXX terms and conditions of service?"
+    )
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content(f'''<p>{statement}</p>
+                <label><input type="checkbox" id="auth-read">Read</label>
+                <button id="submit">Submit Order</button>
+                <script>window.submits=0;</script>''')
+            page.locator("#submit").evaluate(\
+                """el => { el.onclick = () => {
+                    window.submits++;
+                    document.body.insertAdjacentHTML(
+                        'beforeend', \"<div role='status'>Thank you for your order</div>\"
+                    );
+                }; }"""
+            )
+            run_from_api.complete_authorization(
+                page, {"First Name": "AVERY", "Last Name": "BROOKS"},
+            )
+            assert page.locator("#auth-read").is_checked()
+            assert page.evaluate("window.submits") == 1
+        finally:
+            browser.close()
+
+
+def test_order_summary_selects_payload_plan_before_place_order(monkeypatch):
+    import run_from_api
+
+    monkeypatch.setattr(run_from_api.automation, "validate_order", lambda order: None)
+    monkeypatch.setattr(run_from_api.automation, "URL", "about:blank")
+    statement = (
+        "AVERY BROOKS, do you authorize ProviderXX to process this order for the "
+        "products and prices I have reviewed with you today, and agree to the "
+        "ProviderXX terms and conditions of service?"
+    )
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content('''
+                <section id="wanted">ProviderXX 500 Mbps (1-YEAR PRICING)
+                    <label><input id="wanted-check" type="checkbox"> Select</label>
+                </section>
+                <section id="other">ProviderXX 300 Mbps (1-YEAR PRICING)
+                    <label><input id="other-check" type="checkbox"> Select</label>
+                </section>
+                <button id="place">Place Order</button>
+                <script>
+                    window.orderChecks = [];
+                    document.querySelector('#place').onclick = () => {
+                        window.orderChecks.push([
+                            document.querySelector('#wanted-check').checked,
+                            document.querySelector('#other-check').checked
+                        ]);
+                        document.body.innerHTML = `
+                            <p>'''+statement+'''</p>
+                            <label><input type="checkbox">Read</label>
+                            <button id="submit">Submit Order</button>`;
+                        document.querySelector('#submit').onclick = () => {
+                            document.body.insertAdjacentHTML(
+                                'beforeend', '<div role="status">Thank you for your order</div>'
+                            );
+                        };
+                    };
+                </script>
+            ''')
+
+            run_from_api.complete_authorization(
+                page,
+                {
+                    "First Name": "AVERY",
+                    "Last Name": "BROOKS",
+                    "Plan": "500 Mbps (1-YEAR PRICING)",
+                },
+            )
+
+            assert page.evaluate("window.orderChecks") == [[True, False]]
+            assert page.get_by_text("Thank you for your order").is_visible()
+        finally:
+            browser.close()
+
+
+def test_order_summary_missing_plan_stops_before_place_order(monkeypatch):
+    import run_from_api
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content('''
+                <section>ProviderXX 500 Mbps
+                    <label><input type="checkbox"> Select</label>
+                </section>
+                <button id="place">Place Order</button>
+                <script>window.placeClicks = 0;
+                    document.querySelector('#place').onclick = () => window.placeClicks++;
+                </script>
+            ''')
+            with pytest.raises(RuntimeError, match="payload field 'Plan'"):
+                run_from_api.complete_authorization(
+                    page, {"First Name": "AVERY", "Last Name": "BROOKS"}
+                )
+            assert page.evaluate("window.placeClicks") == 0
+        finally:
+            browser.close()
+
+
+def test_authorization_ambiguous_result_does_not_claim_success(monkeypatch):
+    import run_from_api
+
+    monkeypatch.setattr(run_from_api.automation, "validate_order", lambda order: None)
+    monkeypatch.setattr(run_from_api.automation, "URL", "about:blank")
+    monkeypatch.setattr(run_from_api, "TIMEOUT_MS", 500)
+    statement = (
+        "AVERY BROOKS, do you authorize ProviderXX to process this order for the "
+        "products and prices I have reviewed with you today, and agree to the "
+        "ProviderXX terms and conditions of service?"
+    )
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content(f'''<p>{statement}</p><label><input type="checkbox">Read</label>
+                <button>Submit Order</button>''')
+            with pytest.raises(RuntimeError, match="outcome is ambiguous"):
+                run_from_api.complete_authorization(
+                    page, {"First Name": "AVERY", "Last Name": "BROOKS"},
+                )
+        finally:
+            browser.close()
+
+
 @pytest.mark.parametrize("ez,automatic,locked,missing,blocked", [
     ("Yes", "Yes", "Yes", None, False),
     ("Yes", "No", None, None, False),
@@ -685,10 +914,10 @@ def test_account_holder_disclosure_branch_and_single_forward(monkeypatch, ez, au
     monkeypatch.setattr(new, "human_fill", lambda field, value: field.fill(value))
     monkeypatch.setattr(new, "TIMEOUT_MS", 500)
     with sync_playwright() as playwright:
-        options = {"headless": True}
-        if os.environ.get("TEST_CHROMIUM_EXECUTABLE"):
-            options["executable_path"] = os.environ["TEST_CHROMIUM_EXECUTABLE"]
-        browser = playwright.chromium.launch(**options)
+        executable = os.environ.get("TEST_CHROMIUM_EXECUTABLE")
+        browser = playwright.chromium.launch(
+            headless=True, executable_path=executable
+        )
         try:
             page = browser.new_page()
             page.set_content('<iframe id="checkoutContent"></iframe>')
@@ -749,5 +978,95 @@ def test_account_holder_disclosure_branch_and_single_forward(monkeypatch, ez, au
                 assert frame.locator('#auto-read').is_checked()
             for name, index in [('ez', 0 if ez == 'Yes' else 1), ('auto', 0 if automatic == 'Yes' else 1), ('mail', 0), ('ship', 0)]:
                 assert frame.locator(f'input[name={name}]').nth(index).is_checked()
+        finally:
+            browser.close()
+
+@pytest.mark.parametrize("button_text", ["Forward", "Forward >"])
+def test_payment_forward_accepts_both_button_labels(button_text):
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+
+        try:
+            page = browser.new_page()
+            page.set_content("""
+                <iframe id="checkoutContent"></iframe>
+            """)
+
+            frame = page.frames[1]
+
+            frame.set_content("""
+                <button id="forward">BUTTON_TEXT</button>
+
+                <script>
+                    window.clicks = 0;
+
+                    document.querySelector("#forward").onclick = () => {
+                        window.clicks++;
+
+                        document.body.insertAdjacentHTML(
+                            "beforeend",
+                            "<h2>Authorization:</h2>"
+                        );
+                    };
+                </script>
+            """.replace("BUTTON_TEXT", button_text))
+
+            new._navigate_payment_forward(page)
+
+            assert frame.evaluate("window.clicks") == 1
+
+            assert frame.get_by_text(
+                "Authorization:"
+            ).is_visible()
+
+        finally:
+            browser.close()
+
+
+def test_payment_forward_waits_for_delayed_button():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+
+        try:
+            page = browser.new_page()
+            page.set_content("""
+                <iframe id="checkoutContent"></iframe>
+            """)
+
+            frame = page.frames[1]
+
+            frame.set_content("""
+                <div id="root"></div>
+
+                <script>
+                    window.clicks = 0;
+
+                    setTimeout(() => {
+                        const button = document.createElement("button");
+
+                        button.textContent = "Forward";
+
+                        button.onclick = () => {
+                            window.clicks++;
+
+                            document.body.insertAdjacentHTML(
+                                "beforeend",
+                                "<h2>Authorization:</h2>"
+                            );
+                        };
+
+                        document.querySelector("#root").appendChild(button);
+                    }, 500);
+                </script>
+            """)
+
+            new._navigate_payment_forward(page)
+
+            assert frame.evaluate("window.clicks") == 1
+
+            assert frame.get_by_text(
+                "Authorization:"
+            ).is_visible()
+
         finally:
             browser.close()
